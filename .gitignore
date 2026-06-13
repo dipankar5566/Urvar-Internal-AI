@@ -1,0 +1,18 @@
+# Runtime data
+data/
+logs/
+.env
+
+# Node
+node_modules/
+dist/
+
+# ML training artifacts (large — not needed for deployment)
+ml/data/
+ml/saved_model/
+ml/checkpoints/
+ml/.venv/
+ml/__pycache__/
+
+# macOS
+.DS_Store
