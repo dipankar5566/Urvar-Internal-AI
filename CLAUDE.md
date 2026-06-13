@@ -62,9 +62,15 @@ src/
 RAG/
   docs/                  # 7 markdown knowledge files: company.md, products.md, pricing.md,
                          # customers.md, urvar-summary.md, crop-guide.md, disease-guide.md
+tests/
+  setup.ts               # Env preload — dotenv + placeholder fallbacks so unit tests import config-validated modules without real keys
+  unit/                  # Tier 1: deterministic, no-keys regression tests (node:test) — npm test
+  integration/           # Tier 2: opt-in live-API smoke tests (RUN_INTEGRATION) — npm run test:integration
+  eval/                  # Tier 3: manual A/B quality runner (no assertions) — npm run test:eval
 data/                    # SQLite DB + rag-index.json (runtime, gitignored)
 logs/                    # PM2 logs (runtime, gitignored)
 ecosystem.config.cjs     # PM2 process config (CommonJS — required by PM2)
+tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 ```
 
 ---
@@ -98,7 +104,7 @@ ecosystem.config.cjs     # PM2 process config (CommonJS — required by PM2)
 - **Cache invalidation:** SHA-256 hash of all doc content stored in the index. If the hash matches on startup, the index is reused (no Voyage API call). Any doc edit triggers a full re-index.
 - **Embeddings:** Voyage AI `voyage-3-lite` (512-dim). `VOYAGE_API_KEY` is required. `embedTexts()` uses `input_type: 'document'`; `embedQuery()` uses `input_type: 'query'`.
 - **Search:** Pure cosine similarity in `src/rag/store.ts`. 80 chunks × 512 floats — microseconds. No external vector DB.
-- **Chunking:** Markdown split at `##` boundaries in `src/rag/chunker.ts`. Sections >4000 chars sub-split at `###`. Sections <100 chars merged upward. Files with no `##` (e.g. `urvar-summary.md`) become one chunk.
+- **Chunking:** Markdown split at `##` boundaries in `src/rag/chunker.ts`. Sections >4000 chars sub-split at `###` (labeled `## X > ### Y`). Sections <100 chars merged upward. Files with no `##` (e.g. `urvar-summary.md`) become one chunk. Content outside any `##` heading — a heading-less file, or the preamble before a file's first `##` — is labeled by the doc's first `# h1` heading (falling back to the filename). Each chunk's `section` is metadata only — it is **not** embedded (embeddings come from `content`), it's shown to the model as the `### {section} ({sourceFile})` header in the knowledge block.
 - **Adding new docs:** Add the filename to `DOC_FILES` in `src/rag/index.ts` and place the file in `RAG/docs/`. Next startup auto-reindexes (hash mismatch).
 - **`retrieveRelevantContext()` returns empty string on any error** — agents still run, just without RAG context (graceful degradation).
 - **Conversation-aware retrieval:** `BaseAgent.run()` (and `CropDoctorAgent.runWithImage()`) build the embedding query via `buildRetrievalQuery()` in `src/agents/base.ts`, which prepends the most recent prior user turn so follow-ups ("what about its pricing?") keep their referent. The conversation query is used **only** for retrieval — the message sent to the model is unchanged.
@@ -189,7 +195,11 @@ Use `console.log` / `console.error` only — no external logger. Prefix format:
 npm run dev        # tsx watch src/index.ts — hot reload
 npm run build      # tsc — compiles to dist/
 npm start          # node dist/index.js
-npm run typecheck  # tsc --noEmit — type check only
+npm run typecheck  # tsc --noEmit — type check only (src/)
+npm run typecheck:test           # tsc -p tsconfig.test.json — type check src/ + tests/
+npm test           # Tier 1 unit tests — no keys, no cost
+npm run test:integration         # Tier 2 live-API smoke tests (needs real .env)
+npm run test:eval                # Tier 3 manual A/B quality runner (needs real .env)
 pm2 start ecosystem.config.cjs   # production deploy
 pm2 logs urvar-bot               # tail logs
 pm2 restart urvar-bot            # restart
@@ -220,10 +230,15 @@ The production Mac is configured so `urvar-bot` restarts automatically. This is 
 
 ## Test Expectations
 
-- No test suite currently exists.
-- If tests are added, prefer integration tests over unit tests.
-- **Do not mock the Anthropic SDK** — the system's value comes from live API behaviour.
-- Health checks in `src/index.ts` (SQLite ping, Anthropic API ping, Tavily ping, Voyage AI ping) are the primary smoke tests.
+Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert` run through `tsx` — **no new dependencies** (mirrors the `node:sqlite` "use built-ins" ethos).
+
+- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor), `formatSearchResponse`, `buildRetrievalQuery`, `routeByKeyword`, `isRetryable`. This is the regression backbone — run it before every commit.
+- **`npm run test:integration`** — Tier 2 live-API smoke tests (`tests/integration/`). Opt-in only (gated on `RUN_INTEGRATION`, set automatically by the script); needs a real `.env`; makes paid calls. Asserts structural invariants (routing, non-empty grounded response, RAG returns knowledge), not exact text. **Still never mocks the Anthropic SDK** — the value is live behaviour.
+- **`npm run test:eval`** — Tier 3 manual A/B runner (`tests/eval/run.ts`, no assertions). Prints responses + token/cache/iteration stats for representative prompts to compare answer quality before/after a change. Needs a real `.env`.
+- **Env preload:** `tests/setup.ts` (loaded via `--import`) runs `dotenv/config` then fills only *missing* required env vars with placeholders (`??=`). This lets unit tests import modules whose `config.ts` validates env at load time, without real keys; real keys (when a `.env` exists) are never overwritten, so integration/eval still hit live APIs.
+- **Type-checking & build:** tests live outside `rootDir: src`, so `npm run build` never emits them to `dist/`. The base `npm run typecheck` covers `src/` only; **`npm run typecheck:test`** (`tsconfig.test.json`) type-checks `src/` + `tests/` together.
+- **Two source symbols are exported solely for testing** (additive, non-breaking): `routeByKeyword` (`src/orchestrator/index.ts`) and `isRetryable` (`src/agents/base.ts`).
+- Health checks in `src/index.ts` (SQLite ping, Anthropic API ping, Tavily ping, Voyage AI ping) remain the primary startup smoke tests.
 
 ---
 

@@ -84,7 +84,7 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
   { pattern: /how\s+to\s+(treat|cure|fix|control)\s+(disease|pest|blight|rot|rust)/i, agent: 'crop_doctor' },
 ];
 
-function routeByKeyword(message: string): AgentType | null {
+export function routeByKeyword(message: string): AgentType | null {
   for (const { pattern, agent } of KEYWORD_RULES) {
     if (pattern.test(message)) return agent;
   }

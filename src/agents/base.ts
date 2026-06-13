@@ -49,7 +49,7 @@ export function buildRetrievalQuery(current: string, history: MessageParam[]): s
 const RETRYABLE_STATUSES = new Set([429, 500, 503, 529]);
 const RETRYABLE_CODES = /ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED/;
 
-function isRetryable(err: unknown): boolean {
+export function isRetryable(err: unknown): boolean {
   if (err instanceof Anthropic.APIError) return RETRYABLE_STATUSES.has(err.status);
   if (err instanceof Error) return RETRYABLE_CODES.test(err.message);
   return false;
