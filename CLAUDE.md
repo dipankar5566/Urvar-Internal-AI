@@ -197,6 +197,17 @@ pm2 restart urvar-bot            # restart
 - Logs: `./logs/bot-out.log` (stdout), `./logs/bot-error.log` (stderr)
 - Start sequence: `npm run build` then `pm2 start ecosystem.config.cjs`
 
+### Auto-start on boot (macOS / launchd)
+
+The production Mac is configured so `urvar-bot` restarts automatically. This is a **launchd LaunchAgent**, not a LaunchDaemon — the bot starts on **user login** (`dipankarchanda`), not at the pre-login boot screen. For an unattended/headless server, a LaunchDaemon in `/Library/LaunchDaemons/` would be required instead.
+
+- **Agent plist:** `~/Library/LaunchAgents/pm2.dipankarchanda.plist` (launchd label `com.PM2`). `RunAtLoad=true` runs `pm2 resurrect` on login, which restores processes from the saved dump.
+- **Saved process list:** `~/.pm2/dump.pm2`. **After any `pm2 start` / `delete` / config change, run `pm2 save`** — otherwise a reboot resurrects the stale list.
+- **pm2 install note:** pm2 (v7.x) is installed at the user-level npm prefix `~/.npm-global` (full binary path `~/.npm-global/lib/node_modules/pm2/bin/pm2`); `~/.zshrc` adds `~/.npm-global/bin` to PATH.
+- **(Re)install the hook:** `pm2 startup` prints a `sudo env PATH=...` command — run it in a terminal (needs an interactive sudo password), then `pm2 save`.
+- **Verify resurrect** without rebooting: `pm2 kill && pm2 resurrect` should bring `urvar-bot` back online.
+- **Remove the hook:** `pm2 unstartup launchd`.
+
 ---
 
 ## Test Expectations
