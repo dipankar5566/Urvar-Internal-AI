@@ -8,11 +8,16 @@ export interface SearchResult {
   score: number;
 }
 
+export interface WebSearchResponse {
+  answer: string | null;
+  results: SearchResult[];
+}
+
 export async function webSearch(
   query: string,
   maxResults = 5,
   searchDepth: 'basic' | 'advanced' = 'basic',
-): Promise<SearchResult[]> {
+): Promise<WebSearchResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
@@ -34,11 +39,26 @@ export async function webSearch(
       throw new Error(`Tavily API error: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as { results?: SearchResult[] };
-    return data.results ?? [];
+    const data = (await response.json()) as { answer?: string; results?: SearchResult[] };
+    return { answer: data.answer ?? null, results: data.results ?? [] };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Shared formatter for agent tool results — surfaces Tavily's synthesized
+// answer (highest-signal field) ahead of the raw result snippets.
+export function formatSearchResponse({ answer, results }: WebSearchResponse): string {
+  if (!answer && results.length === 0) return 'No search results found.';
+
+  const parts: string[] = [];
+  if (answer) parts.push(`**Answer summary:** ${answer}`);
+  if (results.length > 0) {
+    parts.push(
+      results.map((r) => `**${r.title}**\n${r.url}\n${r.content}`).join('\n\n---\n\n'),
+    );
+  }
+  return parts.join('\n\n---\n\n');
 }
 
 export const webSearchToolDefinition: Tool = {

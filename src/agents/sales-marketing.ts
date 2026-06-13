@@ -1,5 +1,5 @@
 import { BaseAgent } from './base.js';
-import { webSearch, webSearchToolDefinition } from '../tools/web-search.js';
+import { webSearch, webSearchToolDefinition, formatSearchResponse } from '../tools/web-search.js';
 
 const SYSTEM_BLOCKS = [
   {
@@ -27,7 +27,9 @@ Content principles:
 - Emphasize organic, safe, soil-health benefits
 - Include a clear call-to-action in every piece
 - Keep Amazon titles keyword-rich but readable
-- For WhatsApp/Instagram: brief, punchy, emoji-friendly when appropriate`,
+- For WhatsApp/Instagram: brief, punchy, emoji-friendly when appropriate
+
+Grounding: keep product claims truthful and consistent with Urvar's actual catalogue and certifications. Never invent certifications, lab results, prices, or product specifications that aren't in the retrieved knowledge or search results.`,
     cache_control: { type: 'ephemeral' as const },
   },
 ];
@@ -39,14 +41,11 @@ export class SalesMarketingAgent extends BaseAgent {
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      const results = await webSearch(
+      const response = await webSearch(
         input['query'] as string,
         (input['max_results'] as number) ?? 5,
       );
-      if (results.length === 0) return 'No search results found.';
-      return results
-        .map((r) => `**${r.title}**\n${r.url}\n${r.content}`)
-        .join('\n\n---\n\n');
+      return formatSearchResponse(response);
     }
     return `Unknown tool: ${name}`;
   }

@@ -18,5 +18,6 @@ export const config = {
   historyTurns: parseInt(process.env['HISTORY_TURNS'] ?? '10', 10),
   maxAgentIterations: parseInt(process.env['MAX_AGENT_ITERATIONS'] ?? '8', 10),
   ragTopK: parseInt(process.env['RAG_TOP_K'] ?? '5', 10),
+  ragMinScore: parseFloat(process.env['RAG_MIN_SCORE'] ?? '0.3'),
   ragIndexPath: process.env['RAG_INDEX_PATH'] ?? './data/rag-index.json',
 } as const;

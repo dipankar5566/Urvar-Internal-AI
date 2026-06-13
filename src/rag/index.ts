@@ -53,7 +53,7 @@ export async function retrieveRelevantContext(
   if (!inMemoryIndex) return '';
   try {
     const qEmbedding = await embedQuery(query);
-    const chunks = search(inMemoryIndex, qEmbedding, topK);
+    const chunks = search(inMemoryIndex, qEmbedding, topK, config.ragMinScore);
     if (chunks.length === 0) return '';
     const sections = chunks.map((c) => `### ${c.section} (${c.sourceFile})\n${c.content}`);
     return `# Relevant Urvar Knowledge\n\n${sections.join('\n\n---\n\n')}`;

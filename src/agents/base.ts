@@ -4,6 +4,7 @@ import type {
   TextBlockParam,
   Tool,
   ToolResultBlockParam,
+  MessageCreateParamsNonStreaming,
 } from '@anthropic-ai/sdk/resources/messages.js';
 import { config } from '../config.js';
 import { retrieveRelevantContext } from '../rag/index.js';
@@ -15,6 +16,34 @@ export interface AgentRunResult {
   tokensOut: number;
   cacheRead: number;
   cacheWrite: number;
+}
+
+// Per-agent generation tuning. Extended thinking and a non-default temperature
+// are mutually exclusive (the API requires default temperature when thinking is
+// enabled), so agents set one or the other — never both.
+export interface AgentOptions {
+  temperature?: number;
+  thinkingBudget?: number;
+  maxTokens?: number;
+}
+
+// Builds the RAG retrieval query. Embedding only the latest message loses the
+// referent on follow-ups ("what about its pricing?"), so we prepend the most
+// recent prior user turn. Zero extra API calls.
+export function buildRetrievalQuery(current: string, history: MessageParam[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (!m || m.role !== 'user') continue;
+    let text = '';
+    if (typeof m.content === 'string') {
+      text = m.content;
+    } else {
+      const block = m.content.find((b) => b.type === 'text');
+      if (block && 'text' in block) text = (block as { text: string }).text;
+    }
+    if (text) return `${text}\n${current}`;
+  }
+  return current;
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 503, 529]);
@@ -34,17 +63,19 @@ export abstract class BaseAgent {
   protected readonly client: Anthropic;
   protected readonly systemPromptBlocks: TextBlockParam[];
   protected readonly tools: Tool[];
+  protected readonly options: AgentOptions;
 
-  constructor(systemPromptBlocks: TextBlockParam[], tools: Tool[]) {
+  constructor(systemPromptBlocks: TextBlockParam[], tools: Tool[], options: AgentOptions = {}) {
     this.client = new Anthropic({ apiKey: config.anthropicApiKey });
     this.systemPromptBlocks = systemPromptBlocks;
     this.tools = tools;
+    this.options = options;
   }
 
   abstract handleToolCall(name: string, input: Record<string, unknown>): Promise<string>;
 
   async run(userMessage: string, history: MessageParam[]): Promise<AgentRunResult> {
-    const context = await retrieveRelevantContext(userMessage);
+    const context = await retrieveRelevantContext(buildRetrievalQuery(userMessage, history));
     const messages: MessageParam[] = [
       ...history,
       { role: 'user', content: userMessage },
@@ -67,13 +98,20 @@ export abstract class BaseAgent {
     let cacheWrite = 0;
 
     while (iteration < config.maxAgentIterations) {
-      const response = await this.callWithRetry({
+      const params: MessageCreateParamsNonStreaming = {
         model: config.claudeModel,
-        max_tokens: 4096,
+        max_tokens: this.options.maxTokens ?? 4096,
         system: systemBlocks,
         tools: this.tools,
         messages,
-      });
+      };
+      // Extended thinking and temperature are mutually exclusive — thinking wins.
+      if (this.options.thinkingBudget) {
+        params.thinking = { type: 'enabled', budget_tokens: this.options.thinkingBudget };
+      } else if (this.options.temperature !== undefined) {
+        params.temperature = this.options.temperature;
+      }
+      const response = await this.callWithRetry(params);
 
       tokensIn += response.usage.input_tokens;
       tokensOut += response.usage.output_tokens;

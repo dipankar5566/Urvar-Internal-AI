@@ -1,5 +1,5 @@
 import { BaseAgent } from './base.js';
-import { webSearch, webSearchToolDefinition } from '../tools/web-search.js';
+import { webSearch, webSearchToolDefinition, formatSearchResponse } from '../tools/web-search.js';
 
 const SYSTEM_BLOCKS = [
   {
@@ -21,26 +21,25 @@ When answering:
 - Be specific with data: prices, ratings, review counts, SKU formats
 - Identify concrete opportunities for Urvar based on competitor weaknesses
 - Structure responses with clear comparisons when appropriate
-- Focus on actionable competitive intelligence, not just descriptions`,
+- Focus on actionable competitive intelligence, not just descriptions
+
+Grounding: base every claim on retrieved Urvar knowledge or web search results. If web search returns no verifiable competitor data, say so explicitly rather than generalizing — never invent prices, ratings, review counts, or company names.`,
     cache_control: { type: 'ephemeral' as const },
   },
 ];
 
 export class CompetitiveAnalysisAgent extends BaseAgent {
   constructor() {
-    super(SYSTEM_BLOCKS, [webSearchToolDefinition]);
+    super(SYSTEM_BLOCKS, [webSearchToolDefinition], { thinkingBudget: 3000, maxTokens: 8000 });
   }
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      const results = await webSearch(
+      const response = await webSearch(
         input['query'] as string,
         (input['max_results'] as number) ?? 5,
       );
-      if (results.length === 0) return 'No search results found.';
-      return results
-        .map((r) => `**${r.title}**\n${r.url}\n${r.content}`)
-        .join('\n\n---\n\n');
+      return formatSearchResponse(response);
     }
     return `Unknown tool: ${name}`;
   }

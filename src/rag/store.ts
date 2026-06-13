@@ -78,9 +78,11 @@ export function search(
   index: RagIndex,
   queryEmbedding: number[],
   topK: number,
+  minScore = 0,
 ): IndexedChunk[] {
   return index.chunks
     .map((chunk) => ({ chunk, score: cosineSimilarity(queryEmbedding, chunk.embedding) }))
+    .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
     .map((r) => r.chunk);

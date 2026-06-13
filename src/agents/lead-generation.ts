@@ -1,5 +1,5 @@
 import { BaseAgent } from './base.js';
-import { webSearch, webSearchToolDefinition } from '../tools/web-search.js';
+import { webSearch, webSearchToolDefinition, formatSearchResponse } from '../tools/web-search.js';
 
 const SYSTEM_BLOCKS = [
   {
@@ -25,27 +25,26 @@ After listing leads, provide templated outreach messages tailored to each prospe
 - **For nurseries**: Focus on home gardener demand, premium positioning, repeat purchases
 - **For distributors**: Focus on territory exclusivity, growing market, low competition in organic bio-inputs
 
-Use web search to find current, contactable leads — not hypothetical ones.`,
+Use web search to find current, contactable leads — not hypothetical ones.
+
+Grounding: every lead must come from web search results — never fabricate business names, phone numbers, emails, or addresses. If contact details aren't findable, say so rather than inventing them.`,
     cache_control: { type: 'ephemeral' as const },
   },
 ];
 
 export class LeadGenerationAgent extends BaseAgent {
   constructor() {
-    super(SYSTEM_BLOCKS, [webSearchToolDefinition]);
+    super(SYSTEM_BLOCKS, [webSearchToolDefinition], { temperature: 0.3 });
   }
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      const results = await webSearch(
+      const response = await webSearch(
         input['query'] as string,
         (input['max_results'] as number) ?? 8,
         'advanced',
       );
-      if (results.length === 0) return 'No search results found.';
-      return results
-        .map((r) => `**${r.title}**\n${r.url}\n${r.content}`)
-        .join('\n\n---\n\n');
+      return formatSearchResponse(response);
     }
     return `Unknown tool: ${name}`;
   }

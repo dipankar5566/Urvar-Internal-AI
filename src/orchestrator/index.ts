@@ -96,6 +96,7 @@ async function routeByClaude(message: string): Promise<AgentType> {
   const response = await classifierClient.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 20,
+    temperature: 0,
     messages: [
       {
         role: 'user',

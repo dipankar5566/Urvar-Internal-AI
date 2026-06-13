@@ -1,5 +1,5 @@
-import { BaseAgent, type AgentRunResult } from './base.js';
-import { webSearch, webSearchToolDefinition } from '../tools/web-search.js';
+import { BaseAgent, buildRetrievalQuery, type AgentRunResult } from './base.js';
+import { webSearch, webSearchToolDefinition, formatSearchResponse } from '../tools/web-search.js';
 import { optimizeImage } from '../tools/image-optimizer.js';
 import { classifyCropImage } from '../tools/crop-classifier.js';
 import { retrieveRelevantContext } from '../rag/index.js';
@@ -38,27 +38,25 @@ const SYSTEM_BLOCKS = [
 📞 **When to seek further help:** [if symptoms worsen or diagnosis is uncertain]
 
 If the image is unclear or the crop is unidentifiable, ask a specific follow-up question.
-Never recommend chemical pesticides — Urvar is an organic bio-fertilizer brand.`,
+Never recommend chemical pesticides — Urvar is an organic bio-fertilizer brand.
+Grounding: recommend only products from the catalogue above. Never invent product names, dosages, or figures not grounded in the catalogue or search results — if the diagnosis is uncertain, state Low confidence and ask for clarification.`,
     cache_control: { type: 'ephemeral' as const },
   },
 ];
 
 export class CropDoctorAgent extends BaseAgent {
   constructor() {
-    super(SYSTEM_BLOCKS, [webSearchToolDefinition]);
+    super(SYSTEM_BLOCKS, [webSearchToolDefinition], { temperature: 0.3 });
   }
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      const results = await webSearch(
+      const response = await webSearch(
         input['query'] as string,
         (input['max_results'] as number) ?? 5,
         'advanced',
       );
-      if (results.length === 0) return 'No search results found.';
-      return results
-        .map((r) => `**${r.title}**\n${r.url}\n${r.content}`)
-        .join('\n\n---\n\n');
+      return formatSearchResponse(response);
     }
     return `Unknown tool: ${name}`;
   }
@@ -108,7 +106,7 @@ export class CropDoctorAgent extends BaseAgent {
       text: promptText,
     };
 
-    const context = await retrieveRelevantContext(promptText);
+    const context = await retrieveRelevantContext(buildRetrievalQuery(promptText, history));
 
     const messages: MessageParam[] = [
       ...history,

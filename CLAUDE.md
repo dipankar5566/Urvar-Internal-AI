@@ -52,7 +52,7 @@ src/
   memory/
     index.ts             # Haiku-powered memory extraction + storage; pruned at 100 per session
   tools/
-    web-search.ts        # Tavily search + webSearchToolDefinition (Tool shape for Anthropic SDK)
+    web-search.ts        # Tavily search (returns {answer, results}) + formatSearchResponse() + webSearchToolDefinition
     image-optimizer.ts   # Sharp variants (denoised/saturated/grayscale); graceful fallback
     crop-classifier.ts   # TensorFlow crop classifier; graceful fallback if model/tfjs absent
   utils/
@@ -82,7 +82,13 @@ ecosystem.config.cjs     # PM2 process config (CommonJS — required by PM2)
 - `CropDoctorAgent` is the only vision agent — uses `runWithImage()`, which calls `retrieveRelevantContext()` directly before calling `runAgenticLoop()`.
 - New agents must be registered in the `agents` map and `AgentType` union in `src/orchestrator/index.ts`.
 - New agents do **not** need a knowledge bundle in `src/knowledge.ts` — RAG handles retrieval automatically.
-- `max_tokens: 4096` per API call — do not increase without testing.
+- **Per-agent generation tuning** is passed as the optional 3rd `AgentOptions` arg to the `BaseAgent` constructor (`{ temperature?, thinkingBudget?, maxTokens? }`), applied in `runAgenticLoop()`:
+  - `market_research`, `competitive_analysis`, `rd_product_development`: **extended thinking** on (`thinkingBudget: 3000`, `maxTokens: 8000`).
+  - `crop_doctor`, `lead_generation`: `temperature: 0.3` (factual consistency), `max_tokens` default 4096.
+  - `sales_marketing`: no options — default temperature (creative copy), 4096.
+  - **Extended thinking and a non-default `temperature` are mutually exclusive** — the API requires default temperature when `thinking` is enabled. `runAgenticLoop()` enforces this (thinking wins; temperature is only applied when no thinking budget is set). Never set both on one agent.
+  - When thinking is enabled, `max_tokens` MUST exceed `thinkingBudget` (budget min 1024). Pushing the full `response.content` back across tool turns preserves the required `thinking` blocks — do not strip them.
+- `max_tokens` defaults to 4096; agents may override via `AgentOptions.maxTokens` (analytical agents use 8000). Do not raise the default without testing.
 - Max loop iterations: `config.maxAgentIterations` (default 8) — never hardcode.
 - Retry in `BaseAgent.callWithRetry()` handles: status 429/500/503/529 + `ECONNRESET/ETIMEDOUT/ENOTFOUND/ECONNREFUSED`. Max 3 retries, exponential backoff + 30% jitter.
 
@@ -95,12 +101,14 @@ ecosystem.config.cjs     # PM2 process config (CommonJS — required by PM2)
 - **Chunking:** Markdown split at `##` boundaries in `src/rag/chunker.ts`. Sections >4000 chars sub-split at `###`. Sections <100 chars merged upward. Files with no `##` (e.g. `urvar-summary.md`) become one chunk.
 - **Adding new docs:** Add the filename to `DOC_FILES` in `src/rag/index.ts` and place the file in `RAG/docs/`. Next startup auto-reindexes (hash mismatch).
 - **`retrieveRelevantContext()` returns empty string on any error** — agents still run, just without RAG context (graceful degradation).
+- **Conversation-aware retrieval:** `BaseAgent.run()` (and `CropDoctorAgent.runWithImage()`) build the embedding query via `buildRetrievalQuery()` in `src/agents/base.ts`, which prepends the most recent prior user turn so follow-ups ("what about its pricing?") keep their referent. The conversation query is used **only** for retrieval — the message sent to the model is unchanged.
+- **Similarity floor:** `search()` in `src/rag/store.ts` drops chunks scoring below `config.ragMinScore` before returning, so off-topic queries don't inject low-relevance "knowledge". Default `0.3` (conservative), tunable via `RAG_MIN_SCORE`.
 - **`RAG_TOP_K`** controls how many chunks are retrieved per query (default 5, configurable via env var).
 
 ### Routing (Orchestrator)
 
 - Stage 1: `KEYWORD_RULES` in `src/orchestrator/index.ts` — regex matching, no API call.
-- Stage 2: Claude Haiku classifier fallback (`max_tokens: 20`).
+- Stage 2: Claude Haiku classifier fallback (`max_tokens: 20`, `temperature: 0` for deterministic routing).
 - Update `KEYWORD_RULES` when adding a new agent.
 - Keyword patterns use `/regex/i`. Use `\b` word boundaries for acronyms.
 - `AgentType` values are **snake_case strings**: `'market_research'`, `'crop_doctor'` — NOT camelCase.
@@ -261,6 +269,7 @@ CLAUDE_MODEL=claude-sonnet-4-6
 HISTORY_TURNS=10
 MAX_AGENT_ITERATIONS=8
 RAG_TOP_K=5
+RAG_MIN_SCORE=0.3
 RAG_INDEX_PATH=./data/rag-index.json
 ```
 
