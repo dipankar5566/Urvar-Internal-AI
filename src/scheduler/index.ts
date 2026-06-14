@@ -13,7 +13,7 @@ const MARKET_QUERY =
 const COMPETITIVE_QUERY =
   'Provide a weekly competitive intelligence briefing for the Indian organic fertilizer market. Cover: any new competitor product launches, changes in competitor Amazon/Flipkart listings or pricing, competitor marketing activity, and identified market gaps that Urvar Natural can exploit this week.';
 
-const AGENT_TIMEOUT_MS = 90_000;
+const AGENT_TIMEOUT_MS = 240_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -42,20 +42,23 @@ function splitMessage(text: string, maxLen = 4096): string[] {
   return parts;
 }
 
-export async function sendWeeklyReport(bot: TelegramBot): Promise<void> {
-  const groupId = config.telegramGroupId;
+export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Kolkata',
   });
 
-  await bot.sendMessage(groupId, `📊 *Weekly Business Intelligence Briefing*\n_${today}_`, {
+  await bot.sendMessage(chatId, `📊 *Weekly Business Intelligence Briefing*\n_${today}_`, {
     parse_mode: 'Markdown',
   });
 
+  const start = Date.now();
   const [marketResult, competitiveResult] = await Promise.allSettled([
     withTimeout(marketAgent.run(MARKET_QUERY, []), AGENT_TIMEOUT_MS, 'Market Research'),
     withTimeout(competitiveAgent.run(COMPETITIVE_QUERY, []), AGENT_TIMEOUT_MS, 'Competitive Analysis'),
   ]);
+  console.log(
+    `[scheduler] Market Research: ${marketResult.status}, Competitive Analysis: ${competitiveResult.status} (${Date.now() - start}ms)`,
+  );
 
   // Market Intelligence section
   const marketText =
@@ -63,7 +66,7 @@ export async function sendWeeklyReport(bot: TelegramBot): Promise<void> {
       ? marketResult.value.response
       : `⚠️ Market intelligence unavailable: ${(marketResult.reason as Error).message}`;
 
-  await bot.sendMessage(groupId, `*📈 Market Intelligence*\n\n${marketText}`.slice(0, 4096), {
+  await bot.sendMessage(chatId, `*📈 Market Intelligence*\n\n${marketText}`.slice(0, 4096), {
     parse_mode: 'Markdown',
   });
 
@@ -74,7 +77,7 @@ export async function sendWeeklyReport(bot: TelegramBot): Promise<void> {
       : `⚠️ Competitive intelligence unavailable: ${(competitiveResult.reason as Error).message}`;
 
   for (const chunk of splitMessage(`*🔍 Competitive Intelligence*\n\n${compText}`)) {
-    await bot.sendMessage(groupId, chunk, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
   }
 }
 
@@ -83,9 +86,14 @@ export function startScheduler(bot: TelegramBot): void {
   cron.schedule(
     '0 9 * * 1',
     async () => {
+      const groupId = config.telegramGroupId;
+      if (!groupId) {
+        console.log('[scheduler] TELEGRAM_GROUP_ID not configured — skipping weekly report.');
+        return;
+      }
       console.log('[scheduler] Sending weekly report…');
       try {
-        await sendWeeklyReport(bot);
+        await sendWeeklyReport(bot, groupId);
         console.log('[scheduler] Weekly report sent.');
       } catch (err) {
         console.error('[scheduler] Failed to send weekly report:', err);

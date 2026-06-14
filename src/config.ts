@@ -10,9 +10,9 @@ export const config = {
   anthropicApiKey: require_env('ANTHROPIC_API_KEY'),
   telegramBotToken: require_env('TELEGRAM_BOT_TOKEN'),
   tavilyApiKey: require_env('TAVILY_API_KEY'),
-  telegramGroupId: require_env('TELEGRAM_GROUP_ID'),
   voyageApiKey: require_env('VOYAGE_API_KEY'),
 
+  telegramGroupId: process.env['TELEGRAM_GROUP_ID'] ?? '',
   sqliteDbPath: process.env['SQLITE_DB_PATH'] ?? './data/urvar.db',
   claudeModel: process.env['CLAUDE_MODEL'] ?? 'claude-sonnet-4-6',
   historyTurns: parseInt(process.env['HISTORY_TURNS'] ?? '10', 10),

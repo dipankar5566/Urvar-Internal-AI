@@ -73,7 +73,7 @@ export function createBot(): TelegramBot {
   bot.onText(/\/report/, async (msg) => {
     await bot.sendMessage(msg.chat.id, '📊 Generating weekly business briefing… this may take a minute.');
     try {
-      await sendWeeklyReport(bot);
+      await sendWeeklyReport(bot, msg.chat.id);
     } catch (err) {
       await bot.sendMessage(msg.chat.id, getUserFacingError(err));
     }
