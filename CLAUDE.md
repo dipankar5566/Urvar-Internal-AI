@@ -111,6 +111,17 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Similarity floor:** `search()` in `src/rag/store.ts` drops chunks scoring below `config.ragMinScore` before returning, so off-topic queries don't inject low-relevance "knowledge". Default `0.3` (conservative), tunable via `RAG_MIN_SCORE`.
 - **`RAG_TOP_K`** controls how many chunks are retrieved per query (default 5, configurable via env var).
 
+### Learned Knowledge (auto-learning KB)
+
+- **Goal:** the bot grows a shared KB from real usage, gated behind **owner approval** to prevent poisoning. Disable entirely with `KB_LEARNING_ENABLED=false`.
+- **Runtime store is DB-backed, not a curated doc.** Approved facts live in the `learned_knowledge` SQLite table **with their 512-dim embedding persisted** (`src/rag/learned.ts`). They are injected into the in-memory index via `appendLearnedChunk()` (`src/rag/index.ts`) at approval time (real-time, no restart) and at startup (`loadApprovedLearned()` → wired from `src/index.ts`, not `rag/index.ts`, to avoid a circular import).
+- **Never written to `rag-index.json`.** Only `buildIndex` writes that file. Learned chunks augment the in-memory copy only, so the curated docs hash stays stable and curated chunks are never re-embedded. `RAG/docs/learned.md` is a human-readable **mirror only — NOT in `DOC_FILES`** (adding it would force a full curated re-embed).
+- **Sources** (all funnel into `proposeLearned` → pending → owner review): `/teach` command; per-conversation distillation (every 3 turns, `distillConversationToKb`, `void`-prefixed); captured web research (ring buffer in `src/tools/web-search.ts`, drained by the cron); periodic self-summary (`KB_DISTILL_CRON`, `src/learning/index.ts`). All distillation uses Haiku.
+- **Approval is owner-only.** `OWNER_TELEGRAM_ID` is the sole approver. `/teach` by the owner auto-approves; everyone else's input is queued and sent to the owner with inline ✅/✏️/❌ buttons (`callback_data` = `kb:<action>:<id>`, parsed by `parseKbCallback`). If `OWNER_TELEGRAM_ID` is unset, learning degrades gracefully: proposals stay `pending`, `/teach` tells the user no owner is configured.
+- **Precedence: curated wins.** Learned chunks (sentinel `sourceFile: 'learned'`) are retrieved alongside curated ones but labeled `⚠️ unverified`, with a note instructing the model to prefer curated docs on conflict (`retrieveRelevantContext`).
+- **Pure helpers** (`parseKbCallback`, `normalizeFact`, `isDuplicate`) live in `src/rag/learned-util.ts` — no DB/network imports, so Tier-1 unit tests cover them with no keys.
+- `[learning]` is the log prefix for distillation/approval events.
+
 ### Routing (Orchestrator)
 
 - Stage 1: `KEYWORD_RULES` in `src/orchestrator/index.ts` — regex matching, no API call.
@@ -182,6 +193,7 @@ Use `console.log` / `console.error` only — no external logger. Prefix format:
 |--------|---------|
 | `[startup]` | Startup + health checks |
 | `[rag]` | Vector store init + retrieval errors |
+| `[learning]` | Auto-learning KB — distillation + approval events |
 | `[scheduler]` | Cron job events |
 | `[bot]` | Telegram handler errors |
 | `[fatal]` | Uncaught errors in `main()` |
@@ -264,6 +276,10 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 
 10. **ecosystem.config.cjs stays CJS.** PM2 cannot load ESM config files. This file must remain `.cjs` with `module.exports =` syntax.
 
+11. **`RAG/docs/learned.md` is NOT in `DOC_FILES`.** It is a human-readable mirror of approved learned facts. The live store is the `learned_knowledge` table; learned chunks augment the in-memory index only and are never written to `rag-index.json`. Adding learned.md to `DOC_FILES` would force a full curated re-embed on every restart — do not.
+
+12. **Learned knowledge requires owner approval.** Every candidate fact (from `/teach`, conversation/web/periodic distillation) is stored `pending` and only influences answers after the `OWNER_TELEGRAM_ID` user approves it. Never auto-approve non-owner input. The conversation distiller (`void distillConversationToKb(...)`) must stay `void`-prefixed and non-blocking, like memory extraction (#4).
+
 ---
 
 ## Environment Variables
@@ -286,6 +302,9 @@ MAX_AGENT_ITERATIONS=8
 RAG_TOP_K=5
 RAG_MIN_SCORE=0.3
 RAG_INDEX_PATH=./data/rag-index.json
+OWNER_TELEGRAM_ID=                  # unset = auto-learning degrades; proposals stay pending, no approval routing
+KB_LEARNING_ENABLED=true            # false disables /teach + all distillation
+KB_DISTILL_CRON=0 8 * * *           # periodic distillation schedule (IST)
 ```
 
 ---

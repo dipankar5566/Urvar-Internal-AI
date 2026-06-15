@@ -2,6 +2,10 @@
 
 Use this command when the user wants to update the knowledge base (RAG docs) that all agents use for product, market, and agronomic knowledge.
 
+> **Two ways knowledge gets in:**
+> 1. **Curated docs** (this guide) — edit `RAG/docs/*.md`, restart to reindex. Authoritative; takes precedence on conflict.
+> 2. **Auto-learning** (runtime) — the bot proposes facts from `/teach`, conversations, web research, and a periodic job; the `OWNER_TELEGRAM_ID` user approves them via inline Telegram buttons. Approved facts go live immediately (no restart), are stored in the `learned_knowledge` SQLite table with embeddings, and are mirrored (read-only) into `RAG/docs/learned.md`. See the "Learned Knowledge" section in `CLAUDE.md`. `learned.md` is **not** in `DOC_FILES` and must not be added to it.
+
 ## How the RAG System Works
 
 Knowledge lives in `RAG/docs/*.md` as markdown files. At startup:

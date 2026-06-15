@@ -7,6 +7,7 @@ import { RdProductDevelopmentAgent } from '../agents/rd-product-development.js';
 import { SalesMarketingAgent } from '../agents/sales-marketing.js';
 import { LeadGenerationAgent } from '../agents/lead-generation.js';
 import { CropDoctorAgent } from '../agents/crop-doctor.js';
+import { ProductAdvisorAgent } from '../agents/product-advisor.js';
 import type { AgentRunResult } from '../agents/base.js';
 
 export type AgentType =
@@ -16,6 +17,7 @@ export type AgentType =
   | 'sales_marketing'
   | 'lead_generation'
   | 'crop_doctor'
+  | 'product_info'
   | 'general';
 
 export interface OrchestratorResult extends AgentRunResult {
@@ -30,12 +32,25 @@ const agents = {
   sales_marketing: new SalesMarketingAgent(),
   lead_generation: new LeadGenerationAgent(),
   crop_doctor: new CropDoctorAgent(),
+  product_info: new ProductAdvisorAgent(),
 };
 
 const classifierClient = new Anthropic({ apiKey: config.anthropicApiKey });
 
 // Stage 1: fast keyword routing — no API call
 const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
+  // Product/company factual lookups about Urvar's OWN products — answered from the
+  // knowledge base. Kept intent-specific (size/price/dosage/composition) so they
+  // don't steal market-analysis or new-product-development queries below.
+  { pattern: /\b(pack|packet|bag|bottle|pouch|packaging|container)\s+sizes?\b/i, agent: 'product_info' },
+  { pattern: /\b(what|which|available)\s+sizes?\b/i, agent: 'product_info' },
+  { pattern: /\b(dosage|dosing|application\s+rate)\b/i, agent: 'product_info' },
+  { pattern: /\bhow\s+(do\s+i|to)\s+(use|apply|mix)\b/i, agent: 'product_info' },
+  { pattern: /\bhow\s+much\s+(does|is|to\s+(use|apply))\b/i, agent: 'product_info' },
+  { pattern: /\b(price|cost|mrp|rate)\s+(of|for)\b/i, agent: 'product_info' },
+  { pattern: /\b(npk\s+(value|ratio|content)|nutrient\s+(content|composition|value)|composition\s+of)\b/i, agent: 'product_info' },
+  { pattern: /\b(humic\s*acid|vermicompost|seaweed|neem\s+(oil|cake)|micronutrient|bio-?stimulant|panchagavya|jeevamrut)\b.*\b(size|price|cost|dosage|dose|use|apply|crop|how|nutrient|npk|composition|bag|bottle|pack)\b/i, agent: 'product_info' },
+
   { pattern: /market\s+(size|trend|share|growth|demand|analysis|research|opportunity)/i, agent: 'market_research' },
   { pattern: /consumer\s+(insight|behavior|behaviour|preference|sentiment|demand|segment)/i, agent: 'market_research' },
   { pattern: /pricing\s+(strategy|analysis|competition|benchmark)/i, agent: 'market_research' },
@@ -109,7 +124,8 @@ Categories:
 - sales_marketing: content creation, Amazon listings, social media posts, WhatsApp messages, campaigns, marketing copy
 - lead_generation: finding distributors, retailers, FPOs, B2B leads, outreach messages
 - crop_doctor: crop disease diagnosis, pest identification, nutrient deficiency, plant health, treatment advice
-- general: greetings, unclear, off-topic, or simple questions about Urvar's own products
+- product_info: factual questions about Urvar's OWN products or company — pack sizes, pricing, dosage, application, composition/nutrients, which product to use, certifications, company facts
+- general: greetings, thanks, unclear, or off-topic (non-Urvar, non-agriculture) messages only
 
 Message: "${message.slice(0, 500)}"`,
       },
@@ -119,7 +135,7 @@ Message: "${message.slice(0, 500)}"`,
   const text = (response.content[0] as { type: string; text?: string }).text?.trim().toLowerCase() ?? '';
   const validTypes: AgentType[] = [
     'market_research', 'competitive_analysis', 'rd_product_development',
-    'sales_marketing', 'lead_generation', 'crop_doctor', 'general',
+    'sales_marketing', 'lead_generation', 'crop_doctor', 'product_info', 'general',
   ];
   return validTypes.includes(text as AgentType) ? (text as AgentType) : 'general';
 }
