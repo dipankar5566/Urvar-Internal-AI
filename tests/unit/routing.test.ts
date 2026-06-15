@@ -9,6 +9,13 @@ const cases: Array<[string, string]> = [
   ['Write a caption for Instagram', 'sales_marketing'],
   ['Find distributors in Punjab', 'lead_generation'],
   ['My tomato leaves are turning yellow', 'crop_doctor'],
+  ['humic acid size', 'product_info'],
+  ['What size does humic acid come in?', 'product_info'],
+  ['dosage of vermicompost', 'product_info'],
+  ['price of neem oil', 'product_info'],
+  // product_info rules must NOT steal market-analysis or new-product queries
+  ['What is the market size for bio-fertilizers in India?', 'market_research'],
+  ['Should we develop a new vermicompost formulation?', 'rd_product_development'],
 ];
 
 for (const [message, expected] of cases) {

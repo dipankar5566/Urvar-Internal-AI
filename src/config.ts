@@ -20,4 +20,11 @@ export const config = {
   ragTopK: parseInt(process.env['RAG_TOP_K'] ?? '5', 10),
   ragMinScore: parseFloat(process.env['RAG_MIN_SCORE'] ?? '0.3'),
   ragIndexPath: process.env['RAG_INDEX_PATH'] ?? './data/rag-index.json',
+
+  // Auto-learning knowledge base. ownerTelegramId is the only user allowed to
+  // approve learned facts; if unset, auto-learning degrades gracefully (proposals
+  // are stored as pending and logged, but no approval routing happens).
+  ownerTelegramId: process.env['OWNER_TELEGRAM_ID'] ?? '',
+  kbLearningEnabled: (process.env['KB_LEARNING_ENABLED'] ?? 'true') !== 'false',
+  kbDistillCron: process.env['KB_DISTILL_CRON'] ?? '0 8 * * *', // daily 08:00 IST
 } as const;

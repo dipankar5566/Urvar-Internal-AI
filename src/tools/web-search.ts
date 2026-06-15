@@ -13,6 +13,31 @@ export interface WebSearchResponse {
   results: SearchResult[];
 }
 
+// Bounded in-memory log of recent web searches that produced a synthesized
+// answer. The periodic learning job (src/learning/index.ts) drains this to
+// propose grounded findings as KB candidates. In-memory only — lost on restart,
+// which is fine (best-effort capture, no durability guarantee needed).
+export interface RecentSearch {
+  query: string;
+  answer: string;
+}
+
+const RECENT_SEARCH_CAP = 50;
+const recentSearches: RecentSearch[] = [];
+
+function recordSearch(query: string, answer: string | null): void {
+  if (!answer) return;
+  recentSearches.push({ query, answer });
+  if (recentSearches.length > RECENT_SEARCH_CAP) {
+    recentSearches.splice(0, recentSearches.length - RECENT_SEARCH_CAP);
+  }
+}
+
+// Returns and clears the buffered searches, so each is proposed at most once.
+export function drainRecentSearches(): RecentSearch[] {
+  return recentSearches.splice(0, recentSearches.length);
+}
+
 export async function webSearch(
   query: string,
   maxResults = 5,
@@ -40,7 +65,9 @@ export async function webSearch(
     }
 
     const data = (await response.json()) as { answer?: string; results?: SearchResult[] };
-    return { answer: data.answer ?? null, results: data.results ?? [] };
+    const answer = data.answer ?? null;
+    recordSearch(query, answer);
+    return { answer, results: data.results ?? [] };
   } finally {
     clearTimeout(timeout);
   }

@@ -4,9 +4,11 @@ import { config } from './config.js';
 import { db } from './db/index.js';
 import { webSearch } from './tools/web-search.js';
 import { embedQuery } from './rag/embedder.js';
-import { initVectorStore } from './rag/index.js';
+import { initVectorStore, appendLearnedChunk } from './rag/index.js';
+import { loadApprovedLearned } from './rag/learned.js';
 import { createBot } from './bot/telegram.js';
 import { startScheduler } from './scheduler/index.js';
+import { startLearningScheduler } from './learning/index.js';
 
 async function healthCheck(): Promise<void> {
   // 1. SQLite
@@ -39,6 +41,12 @@ async function main(): Promise<void> {
 
   try {
     await initVectorStore();
+    // Inject approved learned facts into the in-memory index (reuses stored
+    // embeddings — no Voyage call, no rag-index.json rewrite). Done here rather
+    // than inside rag/index.ts to avoid a circular import with rag/learned.ts.
+    const learned = loadApprovedLearned();
+    for (const chunk of learned) appendLearnedChunk(chunk);
+    if (learned.length > 0) console.log(`[rag] Injected ${learned.length} approved learned fact(s).`);
   } catch (err) {
     console.error('[startup] Vector store initialization failed:', err);
     process.exit(1);
@@ -53,6 +61,7 @@ async function main(): Promise<void> {
 
   const bot = createBot();
   startScheduler(bot);
+  startLearningScheduler(bot);
 
   console.log('[startup] Bot is running. Press Ctrl+C to stop.');
 

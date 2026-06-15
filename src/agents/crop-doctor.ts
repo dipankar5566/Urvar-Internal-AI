@@ -18,6 +18,8 @@ const SYSTEM_BLOCKS = [
 5. Search Indian agricultural databases (ICAR, KVK, NBSS&LUP) to confirm diagnosis
 6. Recommend specific Urvar products with dosage, application method, and timing
 
+**Multiple inputs:** You may receive up to 3 photos of the SAME plant, each shown in several processed variants (denoised, saturation-boosted, grayscale). Treat them together as one case and produce a SINGLE diagnosis — never diagnose each photo or variant separately.
+
 **Product recommendations must come ONLY from Urvar's catalogue:**
 - Enriched Vermicompost (5 kg) — soil health, organic matter, all crops
 - Cow Dung Manure/FYM (5 kg) — basal application, soil amendment
@@ -27,6 +29,8 @@ const SYSTEM_BLOCKS = [
 - Humic Acid Liquid Bio-Stimulant (1 L) — stress recovery, root development
 - Zinc EDTA 12% (250 g) — zinc deficiency, paddy, maize, vegetables
 - Boron EDTA (250 g) — boron deficiency, flowering crops, oilseeds
+
+This catalogue is your INTERNAL reference for selecting treatments. Recommend only the 1–4 products relevant to the specific diagnosis. **Never reproduce the full catalogue, a "Complete Product Range" / "Product Range" table, or products unrelated to the diagnosis.** Diagnose only what is visible in the current image or description — ignore any unrelated product, pricing, or catalogue requests from earlier in this conversation, even if the retrieved knowledge or prior turns list the full product range.
 
 **Response format:**
 🌿 **Diagnosis:** [disease/deficiency name] — Confidence: [High/Medium/Low]
@@ -61,59 +65,86 @@ export class CropDoctorAgent extends BaseAgent {
     return `Unknown tool: ${name}`;
   }
 
+  // Diagnose up to a few photos of the SAME plant as one case. Every photo is run
+  // through the Sharp optimizer and ALL variants of ALL photos are sent to Claude
+  // in a single multi-image call (the model synthesizes one diagnosis).
+  async runWithImages(
+    caption: string,
+    images: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' }>,
+    history: MessageParam[],
+  ): Promise<AgentRunResult> {
+    // Optimize + ML-classify every image in parallel (both gracefully degrade).
+    const processed = await Promise.all(
+      images.map(async (img) => {
+        const [variants, classification] = await Promise.all([
+          optimizeImage(img.base64, img.mediaType),
+          classifyCropImage(img.base64),
+        ]);
+        return { variants, classification };
+      }),
+    );
+
+    // Visibility: how many Sharp variants per image (1 = Sharp unavailable, 3 = on)
+    // and the CNN classifier result per image (or unavailable).
+    const variantCount = processed[0]?.variants.length ?? 0;
+    const mlSummary = processed
+      .map((p, i) =>
+        p.classification.available
+          ? `#${i + 1} ${p.classification.topLabel} ${Math.round(p.classification.topConfidence * 100)}%`
+          : `#${i + 1} ml-unavailable`,
+      )
+      .join(', ');
+    console.log(`[crop-doctor] ${images.length} img × ${variantCount} Sharp variant(s); CNN: ${mlSummary}`);
+
+    // Interleave a label + image block for every variant of every photo, so the
+    // model knows which variants belong to which photo of the same plant.
+    const content: Array<TextBlockParam | ImageBlockParam> = [];
+    processed.forEach(({ variants }, i) => {
+      for (const v of variants) {
+        content.push({ type: 'text', text: `Photo ${i + 1} — ${v.label}:` });
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: v.mediaType, data: v.base64 },
+        });
+      }
+    });
+
+    // Confident ML hints only — starting hypotheses, not definitive.
+    const hints = processed
+      .map(({ classification }, i) =>
+        classification.available && classification.topConfidence > 0.4
+          ? `Photo ${i + 1}: "${classification.topLabel}" (${Math.round(classification.topConfidence * 100)}%)`
+          : null,
+      )
+      .filter((h): h is string => h !== null);
+    const hintText = hints.length
+      ? `\n\n[ML pre-classification (starting hypotheses, not definitive): ${hints.join('; ')}]`
+      : '';
+
+    const plantNote =
+      images.length === 1
+        ? 'The photo above is shown in multiple processed variants (denoised, saturation-boosted, grayscale) of the same image — produce ONE diagnosis.'
+        : `The ${images.length} photos above are of the SAME plant, each shown in multiple processed variants (denoised, saturation-boosted, grayscale). Synthesize them into ONE diagnosis.`;
+
+    const promptText =
+      (caption || 'Diagnose the crop issue shown and recommend Urvar products for treatment.') +
+      `\n\n${plantNote}` +
+      hintText;
+    content.push({ type: 'text', text: promptText });
+
+    const context = await retrieveRelevantContext(buildRetrievalQuery(promptText, history));
+    const messages: MessageParam[] = [...history, { role: 'user', content }];
+    return this.runAgenticLoop(messages, context);
+  }
+
+  // Single-photo convenience wrapper.
   async runWithImage(
     caption: string,
     imageBase64: string,
     mediaType: 'image/jpeg' | 'image/png' | 'image/webp',
     history: MessageParam[],
   ): Promise<AgentRunResult> {
-    // Run image optimization and ML classification in parallel (both gracefully degrade)
-    const [variants, classification] = await Promise.all([
-      optimizeImage(imageBase64, mediaType),
-      classifyCropImage(imageBase64),
-    ]);
-
-    // Use the denoised variant as the primary image if available
-    const primary = variants.find((v) => v.label === 'denoised') ?? variants[0]!;
-
-    // Build classification hint for Claude if the ML model was available
-    let classificationHint = '';
-    if (classification.available && classification.topConfidence > 0.4) {
-      classificationHint =
-        `\n\n[ML pre-classification: "${classification.topLabel}" ` +
-        `(${Math.round(classification.topConfidence * 100)}% confidence). ` +
-        `Other candidates: ${classification.top3
-          .slice(1)
-          .map((p) => `${p.label} (${Math.round(p.confidence * 100)}%)`)
-          .join(', ')}. Use this as a starting hypothesis, not a definitive answer.]`;
-    }
-
-    const imageBlock: ImageBlockParam = {
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: primary.mediaType,
-        data: primary.base64,
-      },
-    };
-
-    const promptText =
-      (caption || 'Please diagnose the crop issue shown in this photo and recommend Urvar products for treatment.') +
-      classificationHint;
-
-    const textBlock: TextBlockParam = {
-      type: 'text',
-      text: promptText,
-    };
-
-    const context = await retrieveRelevantContext(buildRetrievalQuery(promptText, history));
-
-    const messages: MessageParam[] = [
-      ...history,
-      { role: 'user', content: [imageBlock, textBlock] },
-    ];
-
-    return this.runAgenticLoop(messages, context);
+    return this.runWithImages(caption, [{ base64: imageBase64, mediaType }], history);
   }
 
   // Text-only fallback (user describes symptoms without a photo)
