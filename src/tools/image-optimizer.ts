@@ -35,9 +35,15 @@ export async function optimizeImage(
     const inputBuffer = Buffer.from(inputBase64, 'base64');
     const results: OptimizedImage[] = [];
 
+    // Preserve aspect ratio and detail: cap the long edge at 460px without
+    // upscaling, and DON'T crop. The old 256×256 'cover' resize both threw away
+    // resolution needed for small lesions and cropped the leaf edges out of frame;
+    // this keeps more detail while holding per-image vision token cost down.
+    const RESIZE = { width: 460, height: 460, fit: 'inside' as const, withoutEnlargement: true };
+
     // Variant 1: denoised + normalised (primary)
     const primary = await sharp(inputBuffer)
-      .resize(256, 256, { fit: 'cover', position: 'centre' })
+      .resize(RESIZE)
       .median(3)           // noise reduction
       .gamma(1.2)          // mild brightness normalisation
       .jpeg({ quality: 90 })
@@ -46,7 +52,7 @@ export async function optimizeImage(
 
     // Variant 2: saturation-boosted (makes pathogen pigments more distinct)
     const saturated = await sharp(inputBuffer)
-      .resize(256, 256, { fit: 'cover', position: 'centre' })
+      .resize(RESIZE)
       .modulate({ saturation: 1.8 })
       .jpeg({ quality: 90 })
       .toBuffer();
@@ -54,7 +60,7 @@ export async function optimizeImage(
 
     // Variant 3: grayscale (emphasises texture and lesion spread)
     const grey = await sharp(inputBuffer)
-      .resize(256, 256, { fit: 'cover', position: 'centre' })
+      .resize(RESIZE)
       .grayscale()
       .jpeg({ quality: 90 })
       .toBuffer();
