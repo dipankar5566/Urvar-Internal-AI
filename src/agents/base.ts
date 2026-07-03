@@ -46,6 +46,20 @@ export function buildRetrievalQuery(current: string, history: MessageParam[]): s
   return current;
 }
 
+// Today's date (IST), injected into the dynamic knowledge block so agents
+// reason about "this week" / seasonal timing correctly. Lives in the per-query
+// block — putting it in the cached SYSTEM_BLOCKS would invalidate that cache.
+export function currentDateLine(now = new Date()): string {
+  const formatted = now.toLocaleDateString('en-IN', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  });
+  return `Current date: ${formatted} (IST)`;
+}
+
 const RETRYABLE_STATUSES = new Set([429, 500, 503, 529]);
 const RETRYABLE_CODES = /ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED/;
 
@@ -91,12 +105,13 @@ export abstract class BaseAgent {
   }
 
   protected async runAgenticLoop(messages: MessageParam[], context = ''): Promise<AgentRunResult> {
-    const systemBlocks: TextBlockParam[] = context
-      ? [
-          { type: 'text', text: context, cache_control: { type: 'ephemeral' } },
-          ...this.systemPromptBlocks,
-        ]
-      : this.systemPromptBlocks;
+    // The dynamic block always exists now (date line at minimum) and keeps its
+    // mandatory ephemeral cache_control — stable within a run, changes daily.
+    const dynamicBlock = [currentDateLine(), context].filter(Boolean).join('\n\n');
+    const systemBlocks: TextBlockParam[] = [
+      { type: 'text', text: dynamicBlock, cache_control: { type: 'ephemeral' } },
+      ...this.systemPromptBlocks,
+    ];
 
     let iteration = 0;
     let tokensIn = 0;
@@ -165,6 +180,48 @@ export abstract class BaseAgent {
       messages.push({ role: 'assistant', content: response.content });
       messages.push({ role: 'user', content: toolResults });
       iteration++;
+    }
+
+    // Iteration budget exhausted. Rather than discarding everything gathered,
+    // make one final tool-free call so the model synthesizes an answer from the
+    // research it already has. The synthesis prompt rides in the same user
+    // message as the last tool results (roles must alternate).
+    try {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === 'user' && Array.isArray(lastMessage.content)) {
+        lastMessage.content.push({
+          type: 'text',
+          text: 'You have used all available research steps. Using ONLY the information gathered above, write your best final answer now. Briefly note anything you could not verify.',
+        });
+      }
+      const params: MessageCreateParamsNonStreaming = {
+        model: config.claudeModel,
+        max_tokens: this.options.maxTokens ?? 4096,
+        system: systemBlocks,
+        tools: this.tools,
+        tool_choice: { type: 'none' },
+        messages,
+      };
+      if (this.options.thinkingBudget) {
+        params.thinking = { type: 'enabled', budget_tokens: this.options.thinkingBudget };
+      } else if (this.options.temperature !== undefined) {
+        params.temperature = this.options.temperature;
+      }
+      const response = await this.callWithRetry(params);
+      tokensIn += response.usage.input_tokens;
+      tokensOut += response.usage.output_tokens;
+      const usage = response.usage as unknown as Record<string, number>;
+      cacheRead += usage['cache_read_input_tokens'] ?? 0;
+      cacheWrite += usage['cache_creation_input_tokens'] ?? 0;
+      const text = response.content
+        .filter((b) => b.type === 'text')
+        .map((b) => (b as { type: 'text'; text: string }).text)
+        .join('');
+      if (text) {
+        return { response: text, iterations: iteration + 1, tokensIn, tokensOut, cacheRead, cacheWrite };
+      }
+    } catch (err) {
+      console.error('[bot] budget-exhausted synthesis call failed:', err);
     }
 
     return {

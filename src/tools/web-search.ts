@@ -14,6 +14,9 @@ export interface WebSearchOptions {
   // Full page text per result (truncated in formatSearchResponse). Tavily snippets
   // often cut off contact details — lead generation needs the raw page.
   includeRawContent?: boolean;
+  // Restrict to the last N days via Tavily's news-focused search. Without this,
+  // "this week" queries happily return year-old market-report blog posts.
+  recencyDays?: number;
 }
 
 export interface WebSearchResponse {
@@ -28,14 +31,22 @@ export interface WebSearchResponse {
 export interface RecentSearch {
   query: string;
   answer: string;
+  // Top result snippets — the concrete numbers (prices, ratings, market sizes)
+  // usually live here, not in Tavily's synthesized answer.
+  snippets: string;
 }
 
 const RECENT_SEARCH_CAP = 50;
+const SNIPPETS_PER_SEARCH = 3;
 const recentSearches: RecentSearch[] = [];
 
-function recordSearch(query: string, answer: string | null): void {
+function recordSearch(query: string, answer: string | null, results: SearchResult[]): void {
   if (!answer) return;
-  recentSearches.push({ query, answer });
+  const snippets = results
+    .slice(0, SNIPPETS_PER_SEARCH)
+    .map((r) => `${r.title}: ${r.content.slice(0, 300)}`)
+    .join('\n');
+  recentSearches.push({ query, answer, snippets });
   if (recentSearches.length > RECENT_SEARCH_CAP) {
     recentSearches.splice(0, recentSearches.length - RECENT_SEARCH_CAP);
   }
@@ -67,6 +78,7 @@ export async function webSearch(
         include_answer: true,
         ...(options.includeDomains?.length ? { include_domains: options.includeDomains } : {}),
         ...(options.includeRawContent ? { include_raw_content: true } : {}),
+        ...(options.recencyDays ? { topic: 'news', days: options.recencyDays } : {}),
       }),
       signal: controller.signal,
     });
@@ -77,8 +89,9 @@ export async function webSearch(
 
     const data = (await response.json()) as { answer?: string; results?: SearchResult[] };
     const answer = data.answer ?? null;
-    recordSearch(query, answer);
-    return { answer, results: data.results ?? [] };
+    const results = data.results ?? [];
+    recordSearch(query, answer, results);
+    return { answer, results };
   } finally {
     clearTimeout(timeout);
   }
@@ -121,11 +134,15 @@ export async function runWebSearchTool(
   const includeDomains = Array.isArray(input['include_domains'])
     ? (input['include_domains'] as unknown[]).filter((d): d is string => typeof d === 'string')
     : undefined;
+  const recencyDays =
+    typeof input['recency_days'] === 'number' && input['recency_days'] > 0
+      ? Math.min(Math.round(input['recency_days']), 365)
+      : undefined;
   const response = await webSearch(
     input['query'] as string,
     (input['max_results'] as number) ?? defaults.maxResults ?? 5,
     defaults.searchDepth ?? 'basic',
-    { includeDomains, includeRawContent: defaults.includeRawContent },
+    { includeDomains, includeRawContent: defaults.includeRawContent, recencyDays },
   );
   return formatSearchResponse(response);
 }
@@ -150,6 +167,11 @@ export const webSearchToolDefinition: Tool = {
         items: { type: 'string' },
         description:
           'Optional list of domains to restrict results to (e.g. ["indiamart.com", "justdial.com"]). Use when searching business directories or a specific site.',
+      },
+      recency_days: {
+        type: 'number',
+        description:
+          'Optional: restrict to news from the last N days (e.g. 7 for "this week"). Use for current events, launches, price changes, or regulatory news — NOT for evergreen facts.',
       },
     },
     required: ['query'],

@@ -146,7 +146,9 @@ async function runPeriodicDistill(bot: TelegramBot): Promise<void> {
   // 1. Captured web research.
   const searches = drainRecentSearches();
   if (searches.length > 0) {
-    const block = searches.map((s) => `Q: ${s.query}\nA: ${s.answer}`).join('\n\n');
+    const block = searches
+      .map((s) => `Q: ${s.query}\nA: ${s.answer}${s.snippets ? `\nSources:\n${s.snippets}` : ''}`)
+      .join('\n\n');
     const facts = await distillKbFacts(block, 'web_research');
     for (const fact of facts) await proposeAndNotify(bot, fact, 'web_research', null, 'periodic');
   }

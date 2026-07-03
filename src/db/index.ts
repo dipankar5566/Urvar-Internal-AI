@@ -76,8 +76,8 @@ export function appendHistory(
   );
 }
 
-export function getHistory(sessionId: string): MessageParam[] {
-  const rows = stmtGetHistory.all(sessionId, config.historyTurns * 2) as Array<{
+export function getHistory(sessionId: string, turns = config.historyTurns): MessageParam[] {
+  const rows = stmtGetHistory.all(sessionId, turns * 2) as Array<{
     role: string;
     content: string;
   }>;

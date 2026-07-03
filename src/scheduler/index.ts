@@ -3,6 +3,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { MarketResearchAgent } from '../agents/market-research.js';
 import { CompetitiveAnalysisAgent } from '../agents/competitive-analysis.js';
 import { LeadGenerationAgent } from '../agents/lead-generation.js';
+import { appendHistory, getHistory } from '../db/index.js';
 import { splitMessage, sendMarkdownSafe } from '../utils/message.js';
 import { config } from '../config.js';
 
@@ -10,16 +11,27 @@ const marketAgent = new MarketResearchAgent();
 const competitiveAgent = new CompetitiveAnalysisAgent();
 const leadAgent = new LeadGenerationAgent();
 
+// Weekly deltas: each report section is archived under a synthetic session id
+// and last week's exchange is passed back as history, so the agents can report
+// what CHANGED instead of re-surveying from scratch every Monday.
+const DELTA_INSTRUCTION =
+  ' If a previous briefing is present in this conversation, focus on what has CHANGED since it (use recency-filtered searches) and do not repeat unchanged facts — a short "unchanged since last week" note is enough.';
+
 const MARKET_QUERY =
-  'Provide a weekly market intelligence briefing for the Indian organic fertilizer and bio-input market. Cover: key trends this week, Amazon/Flipkart pricing movements, regulatory news, seasonal demand outlook, and top growth opportunities for a small vermicompost manufacturer in West Bengal.';
+  'Provide a weekly market intelligence briefing for the Indian organic fertilizer and bio-input market. Cover: key trends this week, Amazon/Flipkart pricing movements, regulatory news, seasonal demand outlook, and top growth opportunities for a small vermicompost manufacturer in West Bengal.' +
+  DELTA_INSTRUCTION;
 
 const COMPETITIVE_QUERY =
-  'Provide a weekly competitive intelligence briefing for the Indian organic fertilizer market. Cover: any new competitor product launches, changes in competitor Amazon/Flipkart listings or pricing, competitor marketing activity, and identified market gaps that Urvar Natural can exploit this week.';
+  'Provide a weekly competitive intelligence briefing for the Indian organic fertilizer market. Cover: any new competitor product launches, changes in competitor Amazon/Flipkart listings or pricing, competitor marketing activity, and identified market gaps that Urvar Natural can exploit this week.' +
+  DELTA_INSTRUCTION;
 
 const LEADS_QUERY =
   'Find up to 5 NEW qualified B2B leads for Urvar Natural this week — distributors, retailers, nurseries, agri-input shops, or FPOs, prioritising West Bengal and nearby states. Skip any business already in the pipeline. Save each qualified lead with save_lead, and present them with contact details and a one-line outreach angle each. Keep the briefing concise.';
 
-const AGENT_TIMEOUT_MS = 240_000;
+const REPORT_SESSIONS = {
+  market: 'report:market_research',
+  competitive: 'report:competitive_analysis',
+} as const;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -45,15 +57,28 @@ export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.Cha
     parse_mode: 'Markdown',
   });
 
+  // Last week's exchange (1 turn) gives each analytical agent a baseline to
+  // diff against; lead gen dedups via its pipeline instead.
+  const timeoutMs = config.reportAgentTimeoutMs;
   const start = Date.now();
   const [marketResult, competitiveResult, leadsResult] = await Promise.allSettled([
-    withTimeout(marketAgent.run(MARKET_QUERY, []), AGENT_TIMEOUT_MS, 'Market Research'),
-    withTimeout(competitiveAgent.run(COMPETITIVE_QUERY, []), AGENT_TIMEOUT_MS, 'Competitive Analysis'),
-    withTimeout(leadAgent.run(LEADS_QUERY, []), AGENT_TIMEOUT_MS, 'Lead Generation'),
+    withTimeout(marketAgent.run(MARKET_QUERY, getHistory(REPORT_SESSIONS.market, 1)), timeoutMs, 'Market Research'),
+    withTimeout(competitiveAgent.run(COMPETITIVE_QUERY, getHistory(REPORT_SESSIONS.competitive, 1)), timeoutMs, 'Competitive Analysis'),
+    withTimeout(leadAgent.run(LEADS_QUERY, []), timeoutMs, 'Lead Generation'),
   ]);
   console.log(
     `[scheduler] Market Research: ${marketResult.status}, Competitive Analysis: ${competitiveResult.status}, Lead Generation: ${leadsResult.status} (${Date.now() - start}ms)`,
   );
+
+  // Archive successful sections so next week's run sees them as history.
+  if (marketResult.status === 'fulfilled') {
+    appendHistory(REPORT_SESSIONS.market, 'user', MARKET_QUERY);
+    appendHistory(REPORT_SESSIONS.market, 'assistant', marketResult.value.response, 'market_research');
+  }
+  if (competitiveResult.status === 'fulfilled') {
+    appendHistory(REPORT_SESSIONS.competitive, 'user', COMPETITIVE_QUERY);
+    appendHistory(REPORT_SESSIONS.competitive, 'assistant', competitiveResult.value.response, 'competitive_analysis');
+  }
 
   const sectionText = <T extends { response: string }>(
     result: PromiseSettledResult<T>,

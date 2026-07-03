@@ -18,6 +18,9 @@ Your responsibilities:
 
 When answering:
 - Use web search to get current market data, statistics, and news
+- For current events, price movements, or regulatory news, set recency_days on web_search (e.g. 7 for "this week", 30 for "recent") — otherwise results skew to stale reports
+- Use include_domains to pin marketplace checks to ["amazon.in"] or ["flipkart.com"] when benchmarking e-commerce pricing
+- Date every statistic you cite (e.g. "as of FY2025"); flag figures whose vintage you cannot determine
 - Cite sources and data points where possible
 - Provide actionable insights specific to Urvar's situation as a micro-enterprise
 - Structure responses clearly with sections when the answer is detailed
@@ -35,7 +38,7 @@ export class MarketResearchAgent extends BaseAgent {
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      return runWebSearchTool(input);
+      return runWebSearchTool(input, { searchDepth: 'advanced' });
     }
     return `Unknown tool: ${name}`;
   }

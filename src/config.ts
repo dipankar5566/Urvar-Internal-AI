@@ -20,6 +20,9 @@ export const config = {
   ragTopK: parseInt(process.env['RAG_TOP_K'] ?? '5', 10),
   ragMinScore: parseFloat(process.env['RAG_MIN_SCORE'] ?? '0.3'),
   ragIndexPath: process.env['RAG_INDEX_PATH'] ?? './data/rag-index.json',
+  // Per-agent wall-clock budget for the weekly report. The analytical agents run
+  // extended thinking + multiple searches; 240s proved too tight in production.
+  reportAgentTimeoutMs: parseInt(process.env['REPORT_AGENT_TIMEOUT_MS'] ?? '360000', 10),
 
   // Auto-learning knowledge base. ownerTelegramId is the only user allowed to
   // approve learned facts; if unset, auto-learning degrades gracefully (proposals

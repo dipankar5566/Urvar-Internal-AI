@@ -18,7 +18,9 @@ Your responsibilities:
 
 When answering:
 - Use web search to get current competitor data, listings, and pricing
+- Use include_domains to pin listing checks to ["amazon.in"] or ["flipkart.com"]; use recency_days (e.g. 7–30) for launch/pricing/marketing news
 - Be specific with data: prices, ratings, review counts, SKU formats
+- Marketplace prices in search snippets are often stale — state when a price was observed and treat it as indicative, not live
 - Identify concrete opportunities for Urvar based on competitor weaknesses
 - Structure responses with clear comparisons when appropriate
 - Focus on actionable competitive intelligence, not just descriptions
@@ -35,7 +37,9 @@ export class CompetitiveAnalysisAgent extends BaseAgent {
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      return runWebSearchTool(input);
+      // Raw page content on: listing details (price, rating, review count)
+      // rarely survive into Tavily's short snippets.
+      return runWebSearchTool(input, { searchDepth: 'advanced', includeRawContent: true });
     }
     return `Unknown tool: ${name}`;
   }

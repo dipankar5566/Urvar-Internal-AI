@@ -24,6 +24,10 @@ const cases: Array<[string, string]> = [
   ['list of krishi seva kendras in West Bengal', 'lead_generation'],
   // ...but market-research channel-strategy phrasing stays put
   ['what distribution channel strategy should we use?', 'market_research'],
+  // competitor-flavored pricing goes to competitive_analysis (rule order),
+  // while plain pricing strategy stays with market_research
+  ['what is our competitors pricing strategy?', 'competitive_analysis'],
+  ['pricing strategy for our vermicompost line', 'market_research'],
 ];
 
 for (const [message, expected] of cases) {

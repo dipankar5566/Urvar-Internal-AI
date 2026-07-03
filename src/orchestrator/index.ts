@@ -51,6 +51,15 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
   { pattern: /\b(npk\s+(value|ratio|content)|nutrient\s+(content|composition|value)|composition\s+of)\b/i, agent: 'product_info' },
   { pattern: /\b(humic\s*acid|vermicompost|seaweed|neem\s+(oil|cake)|micronutrient|bio-?stimulant|panchagavya|jeevamrut)\b.*\b(size|price|cost|dosage|dose|use|apply|crop|how|nutrient|npk|composition|bag|bottle|pack)\b/i, agent: 'product_info' },
 
+  // Competitive rules run BEFORE market_research so competitor-flavored queries
+  // ("competitor pricing strategy") aren't stolen by the generic pricing rule.
+  { pattern: /competitor|competition|competitive\s+analysis/i, agent: 'competitive_analysis' },
+  { pattern: /(iffco|coromandel|biowin|godrej|multiplex|tata\s+rallis|pi\s+ind)/i, agent: 'competitive_analysis' },
+  { pattern: /\bswot\b/i, agent: 'competitive_analysis' },
+  { pattern: /market\s+leader/i, agent: 'competitive_analysis' },
+  { pattern: /how\s+(does\s+urvar|we)\s+(compare|stack\s+up)/i, agent: 'competitive_analysis' },
+  { pattern: /benchmark(ing)?\s+(urvar|our|product)/i, agent: 'competitive_analysis' },
+
   { pattern: /market\s+(size|trend|share|growth|demand|analysis|research|opportunity)/i, agent: 'market_research' },
   { pattern: /consumer\s+(insight|behavior|behaviour|preference|sentiment|demand|segment)/i, agent: 'market_research' },
   { pattern: /pricing\s+(strategy|analysis|competition|benchmark)/i, agent: 'market_research' },
@@ -59,13 +68,6 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
   { pattern: /seasonal\s+(demand|trend|opportunity|pattern)/i, agent: 'market_research' },
   { pattern: /(kharif|rabi)\s+(demand|season|market|trend)/i, agent: 'market_research' },
   { pattern: /target\s+(audience|customer|segment|market)/i, agent: 'market_research' },
-
-  { pattern: /competitor|competition|competitive\s+analysis/i, agent: 'competitive_analysis' },
-  { pattern: /(iffco|coromandel|biowin|godrej|multiplex|tata\s+rallis|pi\s+ind)/i, agent: 'competitive_analysis' },
-  { pattern: /\bswot\b/i, agent: 'competitive_analysis' },
-  { pattern: /market\s+leader/i, agent: 'competitive_analysis' },
-  { pattern: /how\s+(does\s+urvar|we)\s+(compare|stack\s+up)/i, agent: 'competitive_analysis' },
-  { pattern: /benchmark(ing)?\s+(urvar|our|product)/i, agent: 'competitive_analysis' },
 
   { pattern: /new\s+product|product\s+(development|innovation|formulation|launch|line)/i, agent: 'rd_product_development' },
   { pattern: /\bR&D\b|research\s+and\s+develop/i, agent: 'rd_product_development' },

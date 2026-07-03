@@ -63,8 +63,8 @@ src/
   types/
     optional-deps.d.ts   # Ambient declarations for sharp and @tensorflow/tfjs-node (typed as any)
 RAG/
-  docs/                  # 7 markdown knowledge files: company.md, products.md, pricing.md,
-                         # customers.md, urvar-summary.md, crop-guide.md, disease-guide.md
+  docs/                  # 8 markdown knowledge files: company.md, products.md, pricing.md,
+                         # customers.md, competitors.md, urvar-summary.md, crop-guide.md, disease-guide.md
 tests/
   setup.ts               # Env preload — dotenv + placeholder fallbacks so unit tests import config-validated modules without real keys
   unit/                  # Tier 1: deterministic, no-keys regression tests (node:test) — npm test
@@ -90,6 +90,9 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - Every text agent uses `webSearchToolDefinition` from `src/tools/web-search.ts`, and handles the call via the shared `runWebSearchTool()` (per-agent defaults for depth/result count/raw content; plumbs the model-supplied `include_domains` through to Tavily).
 - `BaseAgent.extraContext()` is an overridable hook — agent-specific context appended after the RAG knowledge block (Lead Generation uses it to inject the known-leads pipeline).
 - `runAgenticLoop()` keeps exactly one message-history cache breakpoint on the newest `tool_result` (moved each iteration) so multi-iteration tool runs read prior turns from prompt cache. Do not add more breakpoints — Anthropic allows max 4 total (2 are used by system blocks).
+- **The dynamic system block always exists** and starts with `currentDateLine()` (IST) so agents know today's date; RAG context follows. Never move the date into `SYSTEM_BLOCKS` — that would invalidate the cached instructions block daily.
+- **Budget-exhausted synthesis:** when `maxAgentIterations` runs out, `runAgenticLoop()` makes one final call with `tool_choice: none` asking the model to synthesize from the research already gathered (the instruction is appended to the last tool_result user message — roles must alternate). The old "unable to complete" apology is only the fallback if that call fails.
+- `runWebSearchTool()` per-agent defaults: `market_research` advanced; `competitive_analysis` and `crop_doctor` advanced (+ raw content for competitive); `lead_generation` advanced + raw content, 8 results. The model may pass `include_domains` and `recency_days` (news-filtered, capped 365) on any search.
 - `CropDoctorAgent` is the only vision agent — uses `runWithImage()`, which calls `retrieveRelevantContext()` directly before calling `runAgenticLoop()`.
 - New agents must be registered in the `agents` map and `AgentType` union in `src/orchestrator/index.ts`.
 - New agents do **not** need a knowledge bundle in `src/knowledge.ts` — RAG handles retrieval automatically.
@@ -280,7 +283,7 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 
 6. **Typing indicator at 4s.** Telegram clears the typing indicator after 5s. The `setInterval` at 4000ms in `src/bot/telegram.ts` is intentional.
 
-7. **Weekly report uses Promise.allSettled.** In `src/scheduler/index.ts` (market + competitive + leads) — do not change to `Promise.all`. A single agent failure must not abort the full report.
+7. **Weekly report uses Promise.allSettled.** In `src/scheduler/index.ts` (market + competitive + leads) — do not change to `Promise.all`. A single agent failure must not abort the full report. Per-agent timeout comes from `config.reportAgentTimeoutMs` (default 360s — 240s proved too tight in production for the thinking-enabled agents). Successful market/competitive sections are archived under synthetic sessions (`report:market_research`, `report:competitive_analysis`) and last week's exchange is passed back as history so the agents report week-over-week deltas.
 
 8. **Model assignment by cost.** Claude Haiku for cheap tasks (routing, memory extraction). `config.claudeModel` (Sonnet) for all main agent responses.
 
@@ -316,6 +319,7 @@ MAX_AGENT_ITERATIONS=8
 RAG_TOP_K=5
 RAG_MIN_SCORE=0.3
 RAG_INDEX_PATH=./data/rag-index.json
+REPORT_AGENT_TIMEOUT_MS=360000      # per-agent wall-clock budget in the weekly report
 OWNER_TELEGRAM_ID=                  # unset = auto-learning degrades; proposals stay pending, no approval routing
 KB_LEARNING_ENABLED=true            # false disables /teach + all distillation
 KB_DISTILL_CRON=0 8 * * *           # periodic distillation schedule (IST)
