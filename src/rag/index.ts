@@ -60,11 +60,12 @@ export function appendLearnedChunk(chunk: IndexedChunk): void {
 export async function retrieveRelevantContext(
   query: string,
   topK: number = config.ragTopK,
+  learnedCategory: 'business' | 'agronomy' = 'business',
 ): Promise<string> {
   if (!inMemoryIndex) return '';
   try {
     const qEmbedding = await embedQuery(query);
-    const chunks = search(inMemoryIndex, qEmbedding, topK, config.ragMinScore);
+    const chunks = search(inMemoryIndex, qEmbedding, topK, config.ragMinScore, learnedCategory);
     if (chunks.length === 0) return '';
     const sections = chunks.map((c) =>
       c.sourceFile === LEARNED_SOURCE_FILE

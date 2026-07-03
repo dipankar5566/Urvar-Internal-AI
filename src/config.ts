@@ -30,4 +30,8 @@ export const config = {
   ownerTelegramId: process.env['OWNER_TELEGRAM_ID'] ?? '',
   kbLearningEnabled: (process.env['KB_LEARNING_ENABLED'] ?? 'true') !== 'false',
   kbDistillCron: process.env['KB_DISTILL_CRON'] ?? '0 8 * * *', // daily 08:00 IST
+  // Cosine-similarity ceiling for learned facts. At approval a candidate scoring
+  // above this against any existing approved fact is dropped as a near-duplicate;
+  // the daily consolidation pass uses the same threshold to flag clusters.
+  kbSemanticDedupThreshold: parseFloat(process.env['KB_SEMANTIC_DEDUP_THRESHOLD'] ?? '0.92'),
 } as const;

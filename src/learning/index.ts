@@ -4,7 +4,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { drainRecentSearches } from '../tools/web-search.js';
-import { proposeLearned, getLearned } from '../rag/learned.js';
+import { proposeLearned, getLearned, findDuplicateClusters } from '../rag/learned.js';
 import type { LearnedSource } from '../rag/learned.js';
 
 const client = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -53,8 +53,10 @@ ${content}`,
     const parsed: unknown = JSON.parse(match[0]);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((f): f is string => typeof f === 'string' && f.trim().length > 0);
-  } catch {
-    // Best-effort — distillation must never crash the caller.
+  } catch (err) {
+    // Best-effort — distillation must never crash the caller — but log so a
+    // persistently broken distiller is visible in the logs instead of silent.
+    console.error('[learning] distillation failed:', err);
     return [];
   }
 }
@@ -159,6 +161,28 @@ async function runPeriodicDistill(bot: TelegramBot): Promise<void> {
     const convo = rows.reverse().map((r) => `${r.role}: ${r.content}`).join('\n');
     const facts = await distillKbFacts(convo, 'conversation');
     for (const fact of facts) await proposeAndNotify(bot, fact, 'periodic', null, 'periodic');
+  }
+
+  // 3. Consolidation: flag (never delete) near-duplicate approved facts so the
+  // KB stays coherent as it grows. Report to the owner if any clusters exist.
+  const dupes = findDuplicateClusters();
+  if (dupes.length > 0) {
+    console.log(`[learning] consolidation: ${dupes.length} near-duplicate approved pair(s) flagged.`);
+    if (config.ownerTelegramId) {
+      const preview = dupes
+        .slice(0, 5)
+        .map((d) => `#${d.a} ↔ #${d.b} (${d.score.toFixed(2)})\n  • ${d.factA}\n  • ${d.factB}`)
+        .join('\n\n');
+      const more = dupes.length > 5 ? `\n\n…and ${dupes.length - 5} more.` : '';
+      try {
+        await bot.sendMessage(
+          config.ownerTelegramId,
+          `🧹 KB consolidation — ${dupes.length} near-duplicate approved pair(s) worth reviewing (see /kbstats):\n\n${preview}${more}`,
+        );
+      } catch (err) {
+        console.error('[learning] failed to send consolidation report:', err);
+      }
+    }
   }
 
   console.log('[learning] Periodic KB distillation complete.');

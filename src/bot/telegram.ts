@@ -2,13 +2,12 @@ import TelegramBot from 'node-telegram-bot-api';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { appendHistory, getHistory, clearHistory, getLastAgentUsed } from '../db/index.js';
-import { getMemories, clearMemories, extractAndSaveMemories } from '../memory/index.js';
 import { runOrchestrator, type AgentType } from '../orchestrator/index.js';
 import { sendWeeklyReport } from '../scheduler/index.js';
 import { cropDoctorAgent, fetchTelegramImage } from '../agents/crop-doctor.js';
 import { splitMessage, formatUptime, formatUsageFooter, sendMarkdownSafe } from '../utils/message.js';
 import { listLeads, updateLeadStatus, isLeadStatus, LEAD_STATUSES } from '../leads/index.js';
-import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending } from '../rag/learned.js';
+import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending, getKbStats, findDuplicateClusters } from '../rag/learned.js';
 import { proposeAndNotify, distillConversationToKb, distillAgronomyToKb, notifyOwnerOfPending } from '../learning/index.js';
 import { parseKbCallback } from '../rag/learned-util.js';
 
@@ -67,7 +66,6 @@ export function createBot(): TelegramBot {
   bot.onText(/\/start/, async (msg) => {
     const chatId = String(msg.chat.id);
     clearHistory(chatId);
-    clearMemories(chatId);
     turnCounters.set(chatId, 0);
     await bot.sendMessage(
       msg.chat.id,
@@ -79,7 +77,7 @@ export function createBot(): TelegramBot {
   bot.onText(/\/help/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
-      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: write Amazon listings, Instagram captions, WhatsApp messages, email campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India — found leads are saved to a pipeline, view with /leads\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /leads /teach /pending`,
+      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: write Amazon listings, Instagram captions, WhatsApp messages, email campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India — found leads are saved to a pipeline, view with /leads\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /leads /teach /pending /kbstats`,
       { parse_mode: 'Markdown' },
     );
   });
@@ -87,9 +85,8 @@ export function createBot(): TelegramBot {
   bot.onText(/\/clear/, async (msg) => {
     const chatId = String(msg.chat.id);
     clearHistory(chatId);
-    clearMemories(chatId);
     turnCounters.set(chatId, 0);
-    await bot.sendMessage(msg.chat.id, '🗑️ Conversation history and memory cleared.');
+    await bot.sendMessage(msg.chat.id, '🗑️ Conversation history cleared.');
   });
 
   bot.onText(/\/ping/, async (msg) => {
@@ -181,8 +178,14 @@ export function createBot(): TelegramBot {
           await bot.sendMessage(msg.chat.id, 'ℹ️ I already know that (or something very similar).');
           return;
         }
-        const fact = await approveLearned(id, userId);
-        await bot.sendMessage(msg.chat.id, `✅ Learned and live now:\n\n${fact}`);
+        const result = await approveLearned(id, userId);
+        if (result.status === 'approved') {
+          await bot.sendMessage(msg.chat.id, `✅ Learned and live now (${result.category}):\n\n${result.fact}`);
+        } else if (result.status === 'duplicate') {
+          await bot.sendMessage(msg.chat.id, `ℹ️ I already know that — too similar to an existing fact (#${result.of}).`);
+        } else {
+          await bot.sendMessage(msg.chat.id, '⚠️ That item was already decided.');
+        }
       } else {
         await proposeAndNotify(bot, text, 'teach', chatId, userId);
         await bot.sendMessage(msg.chat.id, '🧠 Thanks — sent to the owner for approval.');
@@ -212,6 +215,57 @@ export function createBot(): TelegramBot {
     }
   });
 
+  // /kbstats — owner sees the shape of the knowledge base: counts by category,
+  // status, and source, plus any near-duplicate approved pairs to consolidate.
+  bot.onText(/^\/kbstats$/, async (msg) => {
+    const fromId = String(msg.from?.id ?? msg.chat.id);
+    if (!isOwner(fromId)) {
+      await bot.sendMessage(msg.chat.id, 'Only the owner can view knowledge stats.');
+      return;
+    }
+    try {
+      const stats = getKbStats();
+      if (stats.length === 0) {
+        await bot.sendMessage(msg.chat.id, '📊 The knowledge base is empty.');
+        return;
+      }
+      const approved = stats.filter((s) => s.status === 'approved');
+      const pending = stats.filter((s) => s.status === 'pending');
+      const sum = (rows: typeof stats): number => rows.reduce((n, r) => n + r.n, 0);
+      const byCat = (cat: string): number => sum(approved.filter((s) => s.category === cat));
+
+      const lines: string[] = [
+        `📊 Knowledge base`,
+        ``,
+        `Approved: ${sum(approved)}  (business ${byCat('business')}, agronomy ${byCat('agronomy')})`,
+        `Pending: ${sum(pending)}`,
+        ``,
+        `Approved by source:`,
+        ...approved
+          .slice()
+          .sort((a, b) => b.n - a.n)
+          .map((s) => `  • ${s.source} [${s.category}]: ${s.n}`),
+      ];
+
+      const dupes = findDuplicateClusters();
+      if (dupes.length > 0) {
+        lines.push('', `🧹 ${dupes.length} near-duplicate approved pair(s):`);
+        for (const d of dupes.slice(0, 5)) {
+          lines.push(`  #${d.a} ↔ #${d.b} (${d.score.toFixed(2)})`);
+        }
+        if (dupes.length > 5) lines.push(`  …and ${dupes.length - 5} more.`);
+      }
+
+      // Plain text — fact-derived content can break Markdown.
+      for (const chunk of splitMessage(lines.join('\n'))) {
+        await bot.sendMessage(msg.chat.id, chunk);
+      }
+    } catch (err) {
+      console.error(`[bot] /kbstats error for chat ${msg.chat.id}:`, err);
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
   // Inline-button decisions on pending knowledge candidates (owner only).
   bot.on('callback_query', async (q) => {
     const parsed = parseKbCallback(q.data);
@@ -227,11 +281,19 @@ export function createBot(): TelegramBot {
     const message = q.message;
     try {
       if (action === 'approve') {
-        const fact = await approveLearned(id, fromId);
-        await bot.answerCallbackQuery(q.id, { text: fact ? 'Approved ✅' : 'Already decided.' });
+        const result = await approveLearned(id, fromId);
+        const toast =
+          result.status === 'approved' ? 'Approved ✅' : result.status === 'duplicate' ? 'Duplicate — skipped' : 'Already decided.';
+        await bot.answerCallbackQuery(q.id, { text: toast });
         // No parse_mode: the fact text is unpredictable and would break Markdown.
         if (message) {
-          await bot.editMessageText(`✅ Approved & live:\n\n${fact ?? '(already decided)'}`, {
+          const body =
+            result.status === 'approved'
+              ? `✅ Approved & live (${result.category}):\n\n${result.fact}`
+              : result.status === 'duplicate'
+                ? `ℹ️ Skipped as a near-duplicate of #${result.of}:\n\n${result.fact}`
+                : '⚠️ Already decided.';
+          await bot.editMessageText(body, {
             chat_id: message.chat.id,
             message_id: message.message_id,
           });
@@ -365,11 +427,14 @@ export function createBot(): TelegramBot {
       pendingEdits.delete(fromId);
       try {
         editLearned(learnedId, userText);
-        const fact = await approveLearned(learnedId, fromId);
-        await bot.sendMessage(
-          msg.chat.id,
-          fact ? `✅ Updated & live now:\n\n${fact}` : '⚠️ That item was already decided.',
-        );
+        const result = await approveLearned(learnedId, fromId);
+        const body =
+          result.status === 'approved'
+            ? `✅ Updated & live now (${result.category}):\n\n${result.fact}`
+            : result.status === 'duplicate'
+              ? `ℹ️ That's now a near-duplicate of #${result.of}, so I didn't add it again.`
+              : '⚠️ That item was already decided.';
+        await bot.sendMessage(msg.chat.id, body);
       } catch (err) {
         console.error(`[bot] KB edit error for ${fromId}:`, err);
         await bot.sendMessage(msg.chat.id, getUserFacingError(err));
@@ -385,18 +450,11 @@ export function createBot(): TelegramBot {
 
       let result;
       try {
-        const memories = getMemories(chatId);
+        // Institutional memory lives in the shared KB (injected via RAG), not a
+        // per-session store — so the agent just needs this chat's history.
         const history = getHistory(chatId);
-
-        // Prepend persistent memory as a system-like context message if present
-        const messagesWithContext = memories
-          ? [{ role: 'user' as const, content: `[Context from previous sessions]\n${memories}` },
-             { role: 'assistant' as const, content: 'Understood. I have that context in mind.' },
-             ...history]
-          : history;
-
         const lastAgent = getLastAgentUsed(chatId) as AgentType | null;
-        result = await runOrchestrator(userText, messagesWithContext, lastAgent);
+        result = await runOrchestrator(userText, history, lastAgent);
       } finally {
         clearInterval(typingInterval);
       }
@@ -420,7 +478,9 @@ export function createBot(): TelegramBot {
         await sendMarkdownSafe(bot, msg.chat.id, chunk);
       }
 
-      // Extract memories every 3 turns (async, non-blocking)
+      // Every 3 turns, distil durable company-wide facts into the shared KB
+      // (queued for owner approval). Non-blocking — must never affect the
+      // response path. This is the single learning path (agent_memory retired).
       const turns = (turnCounters.get(chatId) ?? 0) + 1;
       turnCounters.set(chatId, turns);
       if (turns % 3 === 0) {
@@ -428,9 +488,6 @@ export function createBot(): TelegramBot {
         const conversationText = recentHistory
           .map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
           .join('\n');
-        void extractAndSaveMemories(chatId, conversationText);
-        // Also distil durable, company-wide facts into the shared KB (queued for
-        // owner approval). Non-blocking — must never affect the response path.
         void distillConversationToKb(bot, chatId, conversationText);
       }
     } catch (err) {

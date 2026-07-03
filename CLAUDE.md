@@ -52,8 +52,6 @@ src/
   leads/
     index.ts             # Persistent B2B lead pipeline (leads table) + save_lead tool definition
     util.ts              # Pure helpers: normalizeLeadKey(), lead statuses — no DB imports (unit-testable)
-  memory/
-    index.ts             # Haiku-powered memory extraction + storage; pruned at 100 per session
   tools/
     web-search.ts        # Tavily search + formatSearchResponse() + runWebSearchTool() shared handler + webSearchToolDefinition
     image-optimizer.ts   # Sharp variants (denoised/saturated/grayscale); graceful fallback
@@ -116,19 +114,24 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Adding new docs:** Add the filename to `DOC_FILES` in `src/rag/index.ts` and place the file in `RAG/docs/`. Next startup auto-reindexes (hash mismatch).
 - **`retrieveRelevantContext()` returns empty string on any error** — agents still run, just without RAG context (graceful degradation).
 - **Conversation-aware retrieval:** `BaseAgent.run()` (and `CropDoctorAgent.runWithImage()`) build the embedding query via `buildRetrievalQuery()` in `src/agents/base.ts`, which prepends the most recent prior user turn so follow-ups ("what about its pricing?") keep their referent. The conversation query is used **only** for retrieval — the message sent to the model is unchanged.
+- **Category-scoped learned retrieval:** `search()` takes an optional `learnedCategory` (`business` | `agronomy`). Learned chunks carry a `category`; those of the other category are dropped, while **curated doc chunks (no category) always pass**. Each agent's `knowledgeCategory` (default `business`; `CropDoctorAgent` overrides to `agronomy`) is threaded through `retrieveRelevantContext()`. This keeps crop agronomy out of business-intelligence retrieval and vice versa.
 - **Similarity floor:** `search()` in `src/rag/store.ts` drops chunks scoring below `config.ragMinScore` before returning, so off-topic queries don't inject low-relevance "knowledge". Default `0.3` (conservative), tunable via `RAG_MIN_SCORE`.
 - **`RAG_TOP_K`** controls how many chunks are retrieved per query (default 5, configurable via env var).
 
 ### Learned Knowledge (auto-learning KB)
 
+- **This is the bot's single memory.** There is no per-session memory store — the old `agent_memory` module was **retired**. Institutional knowledge lives only in the shared KB and reaches the model via RAG retrieval. Per-chat continuity within a session still comes from `conversation_history`.
 - **Goal:** the bot grows a shared KB from real usage, gated behind **owner approval** to prevent poisoning. Disable entirely with `KB_LEARNING_ENABLED=false`.
 - **Runtime store is DB-backed, not a curated doc.** Approved facts live in the `learned_knowledge` SQLite table **with their 512-dim embedding persisted** (`src/rag/learned.ts`). They are injected into the in-memory index via `appendLearnedChunk()` (`src/rag/index.ts`) at approval time (real-time, no restart) and at startup (`loadApprovedLearned()` → wired from `src/index.ts`, not `rag/index.ts`, to avoid a circular import).
+- **Category (`business` | `agronomy`).** Every fact carries a category, derived from its source by `categoryForSource()` (`crop_doctor` → agronomy, all else → business). Retrieval is category-scoped (see RAG section) so agronomy facts don't crowd business-intelligence retrieval. The column is added by an additive migration that backfills existing rows from `source`.
 - **Never written to `rag-index.json`.** Only `buildIndex` writes that file. Learned chunks augment the in-memory copy only, so the curated docs hash stays stable and curated chunks are never re-embedded. `RAG/docs/learned.md` is a human-readable **mirror only — NOT in `DOC_FILES`** (adding it would force a full curated re-embed).
-- **Sources** (all funnel into `proposeLearned` → pending → owner review): `/teach` command; per-conversation distillation (every 3 turns, `distillConversationToKb`, `void`-prefixed); captured web research (ring buffer in `src/tools/web-search.ts`, drained by the cron); periodic self-summary (`KB_DISTILL_CRON`, `src/learning/index.ts`). All distillation uses Haiku.
+- **Sources** (all funnel into `proposeLearned` → pending → owner review): `/teach` command; per-conversation distillation (every 3 turns, `distillConversationToKb`, `void`-prefixed — the single non-blocking learning call on the response path); captured web research (ring buffer in `src/tools/web-search.ts`, now capturing the top result snippets too, drained by the cron); periodic self-summary (`KB_DISTILL_CRON`, `src/learning/index.ts`). All distillation uses Haiku and logs failures under `[learning]` (no longer silently swallowed).
 - **Approval is owner-only.** `OWNER_TELEGRAM_ID` is the sole approver. `/teach` by the owner auto-approves; everyone else's input is queued and sent to the owner with inline ✅/✏️/❌ buttons (`callback_data` = `kb:<action>:<id>`, parsed by `parseKbCallback`). If `OWNER_TELEGRAM_ID` is unset, learning degrades gracefully: proposals stay `pending`, `/teach` tells the user no owner is configured.
+- **Two-stage dedup.** At propose time a cheap substring check (`isDuplicate`) drops obvious repeats. At **approval** time, `approveLearned()` embeds the fact (needed anyway) and rejects it as a near-duplicate if its cosine similarity to any existing approved fact **of the same category** exceeds `config.kbSemanticDedupThreshold` (default `0.92`). `approveLearned` returns a tagged `ApproveResult` (`approved` | `duplicate` | `not_pending`) — all three call sites in `telegram.ts` handle each case.
+- **Consolidation (non-destructive).** `findDuplicateClusters()` flags approved near-duplicate pairs; the daily cron reports them to the owner and `/kbstats` shows counts by category/source/status plus flagged pairs. Nothing is auto-deleted.
 - **Precedence: curated wins.** Learned chunks (sentinel `sourceFile: 'learned'`) are retrieved alongside curated ones but labeled `⚠️ unverified`, with a note instructing the model to prefer curated docs on conflict (`retrieveRelevantContext`).
-- **Pure helpers** (`parseKbCallback`, `normalizeFact`, `isDuplicate`) live in `src/rag/learned-util.ts` — no DB/network imports, so Tier-1 unit tests cover them with no keys.
-- `[learning]` is the log prefix for distillation/approval events.
+- **Pure helpers** (`parseKbCallback`, `normalizeFact`, `isDuplicate`, `categoryForSource`) live in `src/rag/learned-util.ts` — no DB/network imports, so Tier-1 unit tests cover them with no keys. `cosineSimilarity` is exported from `src/rag/store.ts` and reused for dedup.
+- `[learning]` is the log prefix for distillation/approval/consolidation events.
 
 ### Lead Pipeline
 
@@ -150,9 +153,8 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 
 - Use `db.prepare()` for all queries — never template literals with user data.
 - New tables require `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS`.
-- History retrieval controlled by `config.historyTurns` — do not change the limit directly.
+- History retrieval controlled by `config.historyTurns`; `getHistory(sessionId, turns?)` accepts an optional per-call override (the scheduler passes `1` for report deltas).
 - Rows come back newest-first from DB; `getHistory()` reverses to chronological order.
-- Memory pruned at 100 entries per session (`MAX_MEMORIES` in `src/memory/index.ts`).
 
 ### Config
 
@@ -182,7 +184,7 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 
 ### Files
 - kebab-case: `crop-doctor.ts`, `web-search.ts`, `rd-product-development.ts`
-- Directories: lowercase — `agents/`, `tools/`, `db/`, `memory/`
+- Directories: lowercase — `agents/`, `tools/`, `db/`, `leads/`
 - Each directory has a single `index.ts` as its entry point
 
 ### Classes and Interfaces
@@ -259,7 +261,7 @@ The production Mac is configured so `urvar-bot` restarts automatically. This is 
 
 Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert` run through `tsx` — **no new dependencies** (mirrors the `node:sqlite` "use built-ins" ethos).
 
-- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor), `formatSearchResponse` (incl. raw-content truncation), `buildRetrievalQuery`, `routeByKeyword`, `isRetryable`, `normalizeLeadKey`/`isLeadStatus`, `sendMarkdownSafe` (fake bot). This is the regression backbone — run it before every commit.
+- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor and `learnedCategory` filtering), `cosineSimilarity`, `formatSearchResponse` (incl. raw-content truncation), `buildRetrievalQuery`, `currentDateLine`, `routeByKeyword`, `isRetryable`, `normalizeLeadKey`/`isLeadStatus`, `categoryForSource`, `sendMarkdownSafe` (fake bot). This is the regression backbone — run it before every commit.
 - **`npm run test:integration`** — Tier 2 live-API smoke tests (`tests/integration/`). Opt-in only (gated on `RUN_INTEGRATION`, set automatically by the script); needs a real `.env`; makes paid calls. Asserts structural invariants (routing, non-empty grounded response, RAG returns knowledge), not exact text. **Still never mocks the Anthropic SDK** — the value is live behaviour.
 - **`npm run test:eval`** — Tier 3 manual A/B runner (`tests/eval/run.ts`, no assertions). Prints responses + token/cache/iteration stats for representative prompts to compare answer quality before/after a change. Needs a real `.env`.
 - **Env preload:** `tests/setup.ts` (loaded via `--import`) runs `dotenv/config` then fills only *missing* required env vars with placeholders (`??=`). This lets unit tests import modules whose `config.ts` validates env at load time, without real keys; real keys (when a `.env` exists) are never overwritten, so integration/eval still hit live APIs.
@@ -277,7 +279,7 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 
 3. **Prompt cache control is mandatory.** The dynamically-built knowledge block in `BaseAgent.runAgenticLoop()` and the instructions block in every agent's `SYSTEM_BLOCKS` MUST have `cache_control: { type: 'ephemeral' }`. Removing this breaks Anthropic prompt caching and increases cost.
 
-4. **Memory extraction is non-blocking.** The `void extractAndSaveMemories(...)` call in `src/bot/telegram.ts` must remain `void`-prefixed and must never block or throw on the response path.
+4. **Learning is non-blocking.** The `void distillConversationToKb(...)` call in `src/bot/telegram.ts` (the single learning call on the response path, every 3 turns) must remain `void`-prefixed and must never block or throw on the response path. (The old per-session `extractAndSaveMemories`/`agent_memory` path was retired — the shared KB is the only memory now.)
 
 5. **One `splitMessage()`.** The only copy lives in `src/utils/message.ts`; the scheduler imports it from there. Do not re-introduce a local duplicate.
 
@@ -293,7 +295,7 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 
 11. **`RAG/docs/learned.md` is NOT in `DOC_FILES`.** It is a human-readable mirror of approved learned facts. The live store is the `learned_knowledge` table; learned chunks augment the in-memory index only and are never written to `rag-index.json`. Adding learned.md to `DOC_FILES` would force a full curated re-embed on every restart — do not.
 
-12. **Learned knowledge requires owner approval.** Every candidate fact (from `/teach`, conversation/web/periodic distillation) is stored `pending` and only influences answers after the `OWNER_TELEGRAM_ID` user approves it. Never auto-approve non-owner input. The conversation distiller (`void distillConversationToKb(...)`) must stay `void`-prefixed and non-blocking, like memory extraction (#4).
+12. **Learned knowledge requires owner approval.** Every candidate fact (from `/teach`, conversation/web/periodic distillation) is stored `pending` and only influences answers after the `OWNER_TELEGRAM_ID` user approves it. Never auto-approve non-owner input. The conversation distiller (`void distillConversationToKb(...)`) must stay `void`-prefixed and non-blocking (#4). Semantic dedup at approval and the consolidation report are advisory; they must never delete an approved fact automatically.
 
 13. **Agent-generated replies go through `sendMarkdownSafe()`.** Agent output contains unpredictable `_`/`*` (URLs, business names) that 400s Telegram's Markdown parser. `sendMarkdownSafe()` (`src/utils/message.ts`) retries as plain text on an entity-parse error — never call `bot.sendMessage(..., { parse_mode: 'Markdown' })` directly with agent-generated text. (Static, known-good strings like /start and /help are fine.)
 
@@ -323,6 +325,7 @@ REPORT_AGENT_TIMEOUT_MS=360000      # per-agent wall-clock budget in the weekly 
 OWNER_TELEGRAM_ID=                  # unset = auto-learning degrades; proposals stay pending, no approval routing
 KB_LEARNING_ENABLED=true            # false disables /teach + all distillation
 KB_DISTILL_CRON=0 8 * * *           # periodic distillation schedule (IST)
+KB_SEMANTIC_DEDUP_THRESHOLD=0.92    # cosine ceiling; approvals above it are auto-rejected as near-duplicates
 ```
 
 ---

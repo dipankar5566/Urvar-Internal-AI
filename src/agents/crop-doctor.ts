@@ -3,6 +3,7 @@ import { webSearchToolDefinition, runWebSearchTool } from '../tools/web-search.j
 import { optimizeImage } from '../tools/image-optimizer.js';
 import { classifyCropImage } from '../tools/crop-classifier.js';
 import { retrieveRelevantContext } from '../rag/index.js';
+import { config } from '../config.js';
 import type { MessageParam, ImageBlockParam, TextBlockParam } from '@anthropic-ai/sdk/resources/messages.js';
 
 const SYSTEM_BLOCKS = [
@@ -49,6 +50,9 @@ Grounding: recommend only products from the catalogue above. Never invent produc
 ];
 
 export class CropDoctorAgent extends BaseAgent {
+  // Crop Doctor retrieves agronomy learned facts, not business intelligence.
+  protected override readonly knowledgeCategory = 'agronomy' as const;
+
   constructor() {
     super(SYSTEM_BLOCKS, [webSearchToolDefinition], { temperature: 0.3 });
   }
@@ -127,7 +131,11 @@ export class CropDoctorAgent extends BaseAgent {
       hintText;
     content.push({ type: 'text', text: promptText });
 
-    const context = await retrieveRelevantContext(buildRetrievalQuery(promptText, history));
+    const context = await retrieveRelevantContext(
+      buildRetrievalQuery(promptText, history),
+      config.ragTopK,
+      this.knowledgeCategory,
+    );
     const messages: MessageParam[] = [...history, { role: 'user', content }];
     return this.runAgenticLoop(messages, context);
   }

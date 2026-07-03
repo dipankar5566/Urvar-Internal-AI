@@ -6,6 +6,17 @@
 // retrieveRelevantContext() keys off this to label the chunk "(unverified)".
 export const LEARNED_SOURCE_FILE = 'learned';
 
+// Knowledge categories. Learned facts (and the agents that retrieve them) are
+// split so crop agronomy doesn't crowd business intelligence in retrieval.
+export type KbCategory = 'business' | 'agronomy';
+
+// Derive a fact's category from where it came from. Crop Doctor diagnoses yield
+// agronomy; everything else (conversation/web/periodic distillation, /teach) is
+// treated as business intelligence.
+export function categoryForSource(source: string): KbCategory {
+  return source === 'crop_doctor' ? 'agronomy' : 'business';
+}
+
 export type KbAction = 'approve' | 'edit' | 'reject';
 
 const KB_ACTIONS: ReadonlySet<string> = new Set(['approve', 'edit', 'reject']);

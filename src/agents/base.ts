@@ -88,6 +88,10 @@ export abstract class BaseAgent {
 
   abstract handleToolCall(name: string, input: Record<string, unknown>): Promise<string>;
 
+  // Which learned-knowledge category this agent should retrieve. Business by
+  // default; Crop Doctor overrides to 'agronomy' so the two pools stay separate.
+  protected readonly knowledgeCategory: 'business' | 'agronomy' = 'business';
+
   // Agent-specific context appended after the RAG knowledge block (e.g. the lead
   // pipeline for Lead Generation). Empty by default.
   protected extraContext(): string {
@@ -95,7 +99,11 @@ export abstract class BaseAgent {
   }
 
   async run(userMessage: string, history: MessageParam[]): Promise<AgentRunResult> {
-    const context = await retrieveRelevantContext(buildRetrievalQuery(userMessage, history));
+    const context = await retrieveRelevantContext(
+      buildRetrievalQuery(userMessage, history),
+      config.ragTopK,
+      this.knowledgeCategory,
+    );
     const messages: MessageParam[] = [
       ...history,
       { role: 'user', content: userMessage },

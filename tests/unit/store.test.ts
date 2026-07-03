@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hashDocs, search } from '../../src/rag/store.js';
+import { hashDocs, search, cosineSimilarity } from '../../src/rag/store.js';
 import type { RagIndex, IndexedChunk } from '../../src/rag/store.js';
 
 test('hashDocs is deterministic and order-independent', () => {
@@ -44,4 +44,31 @@ test('search drops chunks below the minScore floor', () => {
 
 test('search returns empty when nothing clears the floor', () => {
   assert.deepEqual(search(index, query, 3, 1.1), []);
+});
+
+test('cosineSimilarity: identical=1, orthogonal=0, zero-vector=0', () => {
+  assert.equal(cosineSimilarity([1, 0], [1, 0]), 1);
+  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
+  assert.equal(cosineSimilarity([0, 0], [1, 1]), 0);
+});
+
+test('search filters learned chunks by category; curated (no category) always pass', () => {
+  const catIndex: RagIndex = {
+    docsHash: 'h',
+    indexedAt: new Date().toISOString(),
+    chunks: [
+      { id: 0, embedding: [1, 0], sourceFile: 'company.md', section: 's', content: 'curated' },
+      { id: 1, embedding: [1, 0], sourceFile: 'learned', section: 's', content: 'biz', category: 'business' },
+      { id: 2, embedding: [1, 0], sourceFile: 'learned', section: 's', content: 'agro', category: 'agronomy' },
+    ],
+  };
+  // business request: curated + business learned, agronomy dropped
+  const biz = search(catIndex, [1, 0], 10, 0, 'business').map((c) => c.id).sort();
+  assert.deepEqual(biz, [0, 1]);
+  // agronomy request: curated + agronomy learned, business dropped
+  const agro = search(catIndex, [1, 0], 10, 0, 'agronomy').map((c) => c.id).sort();
+  assert.deepEqual(agro, [0, 2]);
+  // no category filter: everything eligible
+  const all = search(catIndex, [1, 0], 10, 0).map((c) => c.id).sort();
+  assert.deepEqual(all, [0, 1, 2]);
 });

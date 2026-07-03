@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKbCallback, normalizeFact, isDuplicate } from '../../src/rag/learned-util.js';
+import { parseKbCallback, normalizeFact, isDuplicate, categoryForSource } from '../../src/rag/learned-util.js';
+
+test('categoryForSource maps crop_doctor to agronomy and everything else to business', () => {
+  assert.equal(categoryForSource('crop_doctor'), 'agronomy');
+  assert.equal(categoryForSource('conversation'), 'business');
+  assert.equal(categoryForSource('web_research'), 'business');
+  assert.equal(categoryForSource('periodic'), 'business');
+  assert.equal(categoryForSource('teach'), 'business');
+});
 
 test('parseKbCallback accepts well-formed kb callbacks', () => {
   assert.deepEqual(parseKbCallback('kb:approve:42'), { action: 'approve', id: 42 });

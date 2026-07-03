@@ -7,6 +7,9 @@ import type { RawChunk } from './chunker.js';
 export interface IndexedChunk extends RawChunk {
   id: number;
   embedding: number[];
+  // Set only on learned chunks (business | agronomy). Curated doc chunks leave
+  // this undefined and are never filtered out by category.
+  category?: 'business' | 'agronomy';
 }
 
 export interface RagIndex {
@@ -61,7 +64,7 @@ export async function buildIndex(
   return index;
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;
@@ -79,8 +82,13 @@ export function search(
   queryEmbedding: number[],
   topK: number,
   minScore = 0,
+  learnedCategory?: 'business' | 'agronomy',
 ): IndexedChunk[] {
   return index.chunks
+    // Drop learned chunks of the other category (curated chunks have no category
+    // and always pass). Keeps agronomy facts out of business retrieval and vice
+    // versa without touching the curated docs.
+    .filter((chunk) => !learnedCategory || !chunk.category || chunk.category === learnedCategory)
     .map((chunk) => ({ chunk, score: cosineSimilarity(queryEmbedding, chunk.embedding) }))
     .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
