@@ -41,6 +41,17 @@ test('sub-splits a ## section over 4000 chars at ### boundaries', () => {
   assert.equal(chunks[1]!.section, '## Big > ### Sub');
 });
 
+test('an unsplit ## section containing ### subsections keeps the plain ## label', () => {
+  const md = `## Parent\n${bodyA}\n### Child One\n${bodyB}\n### Child Two\n${bodyC}\n## Next\n${bodyA}`;
+  const chunks = chunkMarkdown(md, 'doc.md');
+  assert.equal(chunks.length, 2);
+  // whole Parent section (under 4000 chars) is one chunk, NOT labeled by its last ###
+  assert.equal(chunks[0]!.section, '## Parent');
+  assert.ok(chunks[0]!.content.includes('### Child One'));
+  assert.ok(chunks[0]!.content.includes('### Child Two'));
+  assert.equal(chunks[1]!.section, '## Next');
+});
+
 test('labels the preamble before the first ## heading by the doc h1', () => {
   const preamble = `# Doc Title\n${bodyA}`;
   const md = `${preamble}\n## Section One\n${bodyB}`;

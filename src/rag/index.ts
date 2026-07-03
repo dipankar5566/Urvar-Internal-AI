@@ -14,6 +14,7 @@ const DOC_FILES = [
   'products.md',
   'pricing.md',
   'customers.md',
+  'competitors.md',
   'urvar-summary.md',
   'crop-guide.md',
   'disease-guide.md',

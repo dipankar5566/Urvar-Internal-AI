@@ -69,7 +69,8 @@ export function chunkMarkdown(text: string, sourceFile: string): RawChunk[] {
         // Current ## section is already long — sub-split here
         flushBuffer(currentH2, line.trim());
       } else {
-        currentH3 = line.trim();
+        // Keep the ### inline; the label stays the plain ## heading. Setting
+        // currentH3 here would mislabel an unsplit section with its last ###.
         buffer.push(line);
       }
     } else {
