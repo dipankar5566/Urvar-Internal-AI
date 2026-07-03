@@ -17,6 +17,25 @@ export function splitMessage(text: string, maxLen = 4096): string[] {
   return parts;
 }
 
+interface UsageLike {
+  tokensIn: number;
+  tokensOut: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+// Owner-only token/cost footer appended to a reply.
+// Sonnet 4.6 pricing (USD per 1M tokens). Update if CLAUDE_MODEL changes.
+// input $3, output $15, cache read 0.1x = $0.30, cache write 1.25x = $3.75
+export function formatUsageFooter(u: UsageLike): string {
+  // The 'general' no-op fallback returns zero usage — show nothing.
+  if (u.tokensIn === 0 && u.tokensOut === 0) return '';
+  const cost =
+    (u.tokensIn * 3 + u.tokensOut * 15 + u.cacheRead * 0.3 + u.cacheWrite * 3.75) / 1_000_000;
+  const n = (x: number): string => x.toLocaleString('en-US');
+  return `_↳ ${n(u.tokensIn)} in · ${n(u.tokensOut)} out · ${n(u.cacheRead)} cached · ~$${cost.toFixed(4)}_`;
+}
+
 export function formatUptime(startMs: number): string {
   const elapsed = Math.floor((Date.now() - startMs) / 1000);
   const h = Math.floor(elapsed / 3600);

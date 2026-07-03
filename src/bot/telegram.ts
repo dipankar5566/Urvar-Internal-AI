@@ -6,7 +6,7 @@ import { getMemories, clearMemories, extractAndSaveMemories } from '../memory/in
 import { runOrchestrator } from '../orchestrator/index.js';
 import { sendWeeklyReport } from '../scheduler/index.js';
 import { cropDoctorAgent, fetchTelegramImage } from '../agents/crop-doctor.js';
-import { splitMessage, formatUptime } from '../utils/message.js';
+import { splitMessage, formatUptime, formatUsageFooter } from '../utils/message.js';
 import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending } from '../rag/learned.js';
 import { proposeAndNotify, distillConversationToKb, distillAgronomyToKb, notifyOwnerOfPending } from '../learning/index.js';
 import { parseKbCallback } from '../rag/learned-util.js';
@@ -48,6 +48,7 @@ const ALBUM_DEBOUNCE_MS = 1200;
 
 interface PendingAlbum {
   chatId: string;
+  fromId: string;
   caption: string;
   fileIds: string[];
   timer: NodeJS.Timeout;
@@ -218,7 +219,7 @@ export function createBot(): TelegramBot {
   });
 
   // Diagnose one or more photos (of the same plant) as a single case.
-  async function processPhotos(chatId: string, caption: string, fileIds: string[]): Promise<void> {
+  async function processPhotos(chatId: string, fromId: string, caption: string, fileIds: string[]): Promise<void> {
     const numericChatId = Number(chatId);
     console.log(`[bot] Crop Doctor: diagnosing ${fileIds.length} photo(s) for chat ${chatId}`);
     try {
@@ -250,7 +251,8 @@ export function createBot(): TelegramBot {
         cache_write: result!.cacheWrite,
       });
 
-      const fullText = `_🌿 Crop Doctor_\n\n${result!.response}`;
+      const footer = isOwner(fromId) ? formatUsageFooter(result!) : '';
+      const fullText = `_🌿 Crop Doctor_\n\n${result!.response}` + (footer ? `\n\n${footer}` : '');
       for (const chunk of splitMessage(fullText)) {
         await bot.sendMessage(numericChatId, chunk, { parse_mode: 'Markdown' });
       }
@@ -269,13 +271,14 @@ export function createBot(): TelegramBot {
   // diagnose together (up to MAX_PHOTOS_PER_DIAGNOSIS of the same plant).
   bot.on('photo', async (msg) => {
     const chatId = String(msg.chat.id);
+    const fromId = String(msg.from?.id ?? msg.chat.id);
     const caption = msg.caption?.trim() ?? '';
     const photos = msg.photo!;
     const bestFileId = photos[photos.length - 1]!.file_id; // highest resolution
     const groupId = msg.media_group_id;
 
     if (!groupId) {
-      await processPhotos(chatId, caption, [bestFileId]);
+      await processPhotos(chatId, fromId, caption, [bestFileId]);
       return;
     }
 
@@ -284,7 +287,7 @@ export function createBot(): TelegramBot {
       const album = pendingAlbums.get(key);
       if (!album) return;
       pendingAlbums.delete(key);
-      void processPhotos(album.chatId, album.caption, album.fileIds);
+      void processPhotos(album.chatId, album.fromId, album.caption, album.fileIds);
     };
 
     const existing = pendingAlbums.get(key);
@@ -296,6 +299,7 @@ export function createBot(): TelegramBot {
     } else {
       pendingAlbums.set(key, {
         chatId,
+        fromId,
         caption,
         fileIds: [bestFileId],
         timer: setTimeout(flush, ALBUM_DEBOUNCE_MS),
@@ -363,7 +367,8 @@ export function createBot(): TelegramBot {
       // Send response (split if too long)
       const agentLabel = AGENT_LABELS[result!.agentUsed] ?? '';
       const header = agentLabel ? `_${agentLabel}_\n\n` : '';
-      const fullText = header + result!.response;
+      const footer = isOwner(fromId) ? formatUsageFooter(result!) : '';
+      const fullText = header + result!.response + (footer ? `\n\n${footer}` : '');
 
       for (const chunk of splitMessage(fullText)) {
         await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });

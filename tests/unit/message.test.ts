@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitMessage, formatUptime } from '../../src/utils/message.js';
+import { splitMessage, formatUptime, formatUsageFooter } from '../../src/utils/message.js';
 
 test('splitMessage returns input unchanged when under the limit', () => {
   assert.deepEqual(splitMessage('hello', 4096), ['hello']);
@@ -33,4 +33,20 @@ test('formatUptime formats seconds-only durations', () => {
 test('formatUptime includes minutes and hours when present', () => {
   assert.match(formatUptime(Date.now() - 90_000), /^1m \d+s$/);
   assert.match(formatUptime(Date.now() - 3_661_000), /^1h 1m \d+s$/);
+});
+
+test('formatUsageFooter renders tokens, cache, and cost', () => {
+  // cost = (1234*3 + 567*15 + 9628*0.3 + 0*3.75) / 1e6 = 0.0150954 → $0.0151
+  const footer = formatUsageFooter({
+    tokensIn: 1234,
+    tokensOut: 567,
+    cacheRead: 9628,
+    cacheWrite: 0,
+  });
+  assert.equal(footer, '_↳ 1,234 in · 567 out · 9,628 cached · ~$0.0151_');
+});
+
+test('formatUsageFooter returns empty string when no tokens were used', () => {
+  // the 'general' no-op route reports zero usage — show nothing
+  assert.equal(formatUsageFooter({ tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 }), '');
 });

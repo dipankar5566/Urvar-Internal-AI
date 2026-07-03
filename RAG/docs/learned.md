@@ -33,3 +33,41 @@ approval flow (`/teach`, or the ✏️ Edit button).
 - Boron deficiency reduces bud opening and petal strength in roses; treat with Boron EDTA foliar spray (2–3 g per 20 L water) at bud formation to strengthen cell walls and reduce balling susceptibility.  _(source: crop_doctor, approved 2026-06-15)_
 
 - Botrytis blight causes rose bud balling, brown papery outer petals, and stem dieback; treat with Humic Acid Liquid Bio-Stimulant foliar spray (3 ml/L every 7–10 days) and Enriched Vermicompost (200–250 g per pot) to suppress fungus.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Zinc deficiency in citrus causes interveinal yellowing (mottle leaf pattern) with greener veins and smaller leaves; treat with Zinc EDTA 12% foliar spray at 3–5 gm per 20 litres water, applied 2–3 times at 10-day intervals.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Citrus mite infestations worsen in low humidity, dusty environments, and water-stressed plants; prevention includes regular adequate watering, dust removal, and improved air circulation around the plant.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Zinc deficiency in container-grown citrus is caused by alkaline potting mix, overwatering, or lack of organic matter; Enriched Vermicompost added to soil improves nutrient availability and plant recovery from mite stress.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Physical water washing of plant foliage, especially leaf undersides and fruit, dislodges 60–70% of citrus mites immediately and should be repeated every 3–4 days as part of integrated mite management.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Citrus red mite and two-spotted spider mite infestation causes silvery-bronze stippling on leaves and orange-brown russetting on fruit; treat with Humic Acid Liquid Bio-Stimulant foliar spray every 7–10 days for 3 applications.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Cercospora leaf spot causes dark brown-to-black circular spots (2–8 mm) with shot-hole development on jasmine leaves; treat with Humic Acid Liquid Bio-Stimulant (3 ml/L) and Zinc EDTA 12% (3–5 gm/20 L) foliar sprays at 7–10 day intervals.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Zinc deficiency predisposes jasmine to Cercospora infection; apply Zinc EDTA 12% foliar spray to strengthen epidermal cell walls and boost natural defence enzymes.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Cercospora leaf spot spreads via windborne spores; overhead watering and wet foliage are primary infection triggers — water only at plant base in morning to prevent disease spread.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Enriched Vermicompost (200–300 gm per plant, worked into top 5 cm soil) builds plant immunity against Cercospora by promoting beneficial Trichoderma spp. populations.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Remove and destroy heavily spotted jasmine leaves immediately and do not compost; fallen infected leaves on soil surface are the primary overwintering spore reservoir.  _(source: crop_doctor, approved 2026-06-15)_
+
+- Citrus spider mites cause leaf yellowing and stippling; treatment includes miticides, natural predators (ladybugs), and adequate irrigation  _(source: web_research, approved 2026-06-16)_
+
+- Zinc deficiency is a predisposing factor for Cercospora infections on jasmine and should be corrected with Zinc EDTA treatment  _(source: periodic, approved 2026-06-16)_
+
+- Overhead watering of Jui plants should be avoided; water only at base to prevent fungal leaf spot development  _(source: periodic, approved 2026-06-16)_
+
+- Cercospora jasminicola spreads via windborne spores and is accelerated by overhead watering and crowded plant conditions  _(source: periodic, approved 2026-06-16)_
+
+- Cercospora leaf spot (Cercospora jasminicola) is a confirmed fungal disease affecting Jui/Jasmine plants in Asansol region, especially during Oct-Dec warm humid post-monsoon period  _(source: periodic, approved 2026-06-16)_
+
+- Jasmine shot hole disease in West Bengal controlled by sanitation, avoiding overhead watering, and fungicides like Bordeaux mixture or chlorothalonil  _(source: web_research, approved 2026-06-16)_
+
+- Jui flower (Jasminum auriculatum) Cercospora leaf spot causes reddish-brown spots leading to defoliation; managed with copper oxychloride or mancozeb fungicides  _(source: web_research, approved 2026-06-16)_
+
+- Zinc deficiency in citrus causes yellowing between veins, while mite infestation causes stippling and yellowing across leaves  _(source: web_research, approved 2026-06-16)_
+
+- Organic treatments for citrus mite leaf damage include predatory mites and horticultural oil sprays applied every 3-4 weeks  _(source: web_research, approved 2026-06-16)_
