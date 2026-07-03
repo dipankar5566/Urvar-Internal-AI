@@ -74,13 +74,20 @@ export abstract class BaseAgent {
 
   abstract handleToolCall(name: string, input: Record<string, unknown>): Promise<string>;
 
+  // Agent-specific context appended after the RAG knowledge block (e.g. the lead
+  // pipeline for Lead Generation). Empty by default.
+  protected extraContext(): string {
+    return '';
+  }
+
   async run(userMessage: string, history: MessageParam[]): Promise<AgentRunResult> {
     const context = await retrieveRelevantContext(buildRetrievalQuery(userMessage, history));
     const messages: MessageParam[] = [
       ...history,
       { role: 'user', content: userMessage },
     ];
-    return this.runAgenticLoop(messages, context);
+    const extra = this.extraContext();
+    return this.runAgenticLoop(messages, [context, extra].filter(Boolean).join('\n\n'));
   }
 
   protected async runAgenticLoop(messages: MessageParam[], context = ''): Promise<AgentRunResult> {
@@ -143,6 +150,17 @@ export abstract class BaseAgent {
         const result = await this.handleToolCall(toolBlock.name, toolBlock.input);
         toolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: result });
       }
+
+      // Keep exactly one message-history cache breakpoint, on the newest
+      // tool_result, so each loop turn reads all prior turns (system + tool
+      // results) from cache instead of re-billing them as fresh input.
+      for (const m of messages) {
+        if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+        for (const b of m.content) {
+          if (b.type === 'tool_result' && b.cache_control) delete b.cache_control;
+        }
+      }
+      toolResults[toolResults.length - 1]!.cache_control = { type: 'ephemeral' };
 
       messages.push({ role: 'assistant', content: response.content });
       messages.push({ role: 'user', content: toolResults });

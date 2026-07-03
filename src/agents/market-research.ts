@@ -1,5 +1,5 @@
 import { BaseAgent } from './base.js';
-import { webSearch, webSearchToolDefinition, formatSearchResponse } from '../tools/web-search.js';
+import { webSearchToolDefinition, runWebSearchTool } from '../tools/web-search.js';
 
 const SYSTEM_BLOCKS = [
   {
@@ -35,11 +35,7 @@ export class MarketResearchAgent extends BaseAgent {
 
   async handleToolCall(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'web_search') {
-      const response = await webSearch(
-        input['query'] as string,
-        (input['max_results'] as number) ?? 5,
-      );
-      return formatSearchResponse(response);
+      return runWebSearchTool(input);
     }
     return `Unknown tool: ${name}`;
   }

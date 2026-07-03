@@ -16,6 +16,14 @@ const cases: Array<[string, string]> = [
   // product_info rules must NOT steal market-analysis or new-product queries
   ['What is the market size for bio-fertilizers in India?', 'market_research'],
   ['Should we develop a new vermicompost formulation?', 'rd_product_development'],
+  // Indian trade vocabulary routes to lead_generation without a "find" verb
+  ['stockists in Nadia district', 'lead_generation'],
+  ['any wholesalers for vermicompost near Ranchi?', 'lead_generation'],
+  ['dealership enquiry from Hooghly', 'lead_generation'],
+  ['agro dealers in North 24 Parganas', 'lead_generation'],
+  ['list of krishi seva kendras in West Bengal', 'lead_generation'],
+  // ...but market-research channel-strategy phrasing stays put
+  ['what distribution channel strategy should we use?', 'market_research'],
 ];
 
 for (const [message, expected] of cases) {

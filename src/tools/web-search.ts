@@ -6,6 +6,14 @@ export interface SearchResult {
   url: string;
   content: string;
   score: number;
+  raw_content?: string | null;
+}
+
+export interface WebSearchOptions {
+  includeDomains?: string[];
+  // Full page text per result (truncated in formatSearchResponse). Tavily snippets
+  // often cut off contact details — lead generation needs the raw page.
+  includeRawContent?: boolean;
 }
 
 export interface WebSearchResponse {
@@ -42,6 +50,7 @@ export async function webSearch(
   query: string,
   maxResults = 5,
   searchDepth: 'basic' | 'advanced' = 'basic',
+  options: WebSearchOptions = {},
 ): Promise<WebSearchResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -56,6 +65,8 @@ export async function webSearch(
         search_depth: searchDepth,
         max_results: maxResults,
         include_answer: true,
+        ...(options.includeDomains?.length ? { include_domains: options.includeDomains } : {}),
+        ...(options.includeRawContent ? { include_raw_content: true } : {}),
       }),
       signal: controller.signal,
     });
@@ -73,6 +84,10 @@ export async function webSearch(
   }
 }
 
+// Raw page text is capped per result so a handful of directory pages can't blow
+// up the tool result (and every subsequent loop turn's input tokens).
+const RAW_CONTENT_CAP = 1500;
+
 // Shared formatter for agent tool results — surfaces Tavily's synthesized
 // answer (highest-signal field) ahead of the raw result snippets.
 export function formatSearchResponse({ answer, results }: WebSearchResponse): string {
@@ -82,10 +97,37 @@ export function formatSearchResponse({ answer, results }: WebSearchResponse): st
   if (answer) parts.push(`**Answer summary:** ${answer}`);
   if (results.length > 0) {
     parts.push(
-      results.map((r) => `**${r.title}**\n${r.url}\n${r.content}`).join('\n\n---\n\n'),
+      results
+        .map((r) => {
+          const base = `**${r.title}**\n${r.url}\n${r.content}`;
+          if (!r.raw_content) return base;
+          const raw = r.raw_content.slice(0, RAW_CONTENT_CAP);
+          const ellipsis = r.raw_content.length > RAW_CONTENT_CAP ? '…' : '';
+          return `${base}\nPage content: ${raw}${ellipsis}`;
+        })
+        .join('\n\n---\n\n'),
     );
   }
   return parts.join('\n\n---\n\n');
+}
+
+// Shared web_search tool-call handler for agents. Per-agent defaults (search
+// depth, result count, raw content) come from `defaults`; the model may narrow
+// results to specific sites via the optional include_domains input.
+export async function runWebSearchTool(
+  input: Record<string, unknown>,
+  defaults: { maxResults?: number; searchDepth?: 'basic' | 'advanced'; includeRawContent?: boolean } = {},
+): Promise<string> {
+  const includeDomains = Array.isArray(input['include_domains'])
+    ? (input['include_domains'] as unknown[]).filter((d): d is string => typeof d === 'string')
+    : undefined;
+  const response = await webSearch(
+    input['query'] as string,
+    (input['max_results'] as number) ?? defaults.maxResults ?? 5,
+    defaults.searchDepth ?? 'basic',
+    { includeDomains, includeRawContent: defaults.includeRawContent },
+  );
+  return formatSearchResponse(response);
 }
 
 export const webSearchToolDefinition: Tool = {
@@ -102,6 +144,12 @@ export const webSearchToolDefinition: Tool = {
       max_results: {
         type: 'number',
         description: 'Number of results to return (1–10). Default is 5.',
+      },
+      include_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Optional list of domains to restrict results to (e.g. ["indiamart.com", "justdial.com"]). Use when searching business directories or a specific site.',
       },
     },
     required: ['query'],

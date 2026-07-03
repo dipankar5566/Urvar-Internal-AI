@@ -43,6 +43,13 @@ const stmtGetHistory = db.prepare(`
 
 const stmtClear = db.prepare(`DELETE FROM conversation_history WHERE session_id = ?`);
 
+const stmtLastAgent = db.prepare(`
+  SELECT agent_used FROM conversation_history
+  WHERE session_id = ? AND role = 'assistant' AND agent_used IS NOT NULL AND agent_used != 'general'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+`);
+
 export interface TokenUsage {
   tokens_in: number;
   tokens_out: number;
@@ -83,4 +90,11 @@ export function getHistory(sessionId: string): MessageParam[] {
 
 export function clearHistory(sessionId: string): void {
   stmtClear.run(sessionId);
+}
+
+// Most recent specialist that answered in this session — used by the
+// orchestrator's classifier so short follow-ups stay with the same agent.
+export function getLastAgentUsed(sessionId: string): string | null {
+  const row = stmtLastAgent.get(sessionId) as { agent_used: string } | undefined;
+  return row?.agent_used ?? null;
 }

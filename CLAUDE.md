@@ -42,21 +42,24 @@ src/
     sales-marketing.ts
     lead-generation.ts
   orchestrator/
-    index.ts             # 2-stage routing: regex KEYWORD_RULES → Haiku classifier fallback
+    index.ts             # 2-stage routing: regex KEYWORD_RULES → Haiku classifier fallback (with last-agent follow-up hint)
   bot/
-    telegram.ts          # All Telegram handlers (/start /help /clear /ping /report, message, photo)
+    telegram.ts          # All Telegram handlers (/start /help /clear /ping /report /leads, message, photo)
   scheduler/
-    index.ts             # Weekly cron Monday 09:00 IST; exports sendWeeklyReport()
+    index.ts             # Weekly cron Monday 09:00 IST; exports sendWeeklyReport() (market + competitive + leads)
   db/
-    index.ts             # node:sqlite schema, prepared statements, appendHistory/getHistory
+    index.ts             # node:sqlite schema, prepared statements, appendHistory/getHistory/getLastAgentUsed
+  leads/
+    index.ts             # Persistent B2B lead pipeline (leads table) + save_lead tool definition
+    util.ts              # Pure helpers: normalizeLeadKey(), lead statuses — no DB imports (unit-testable)
   memory/
     index.ts             # Haiku-powered memory extraction + storage; pruned at 100 per session
   tools/
-    web-search.ts        # Tavily search (returns {answer, results}) + formatSearchResponse() + webSearchToolDefinition
+    web-search.ts        # Tavily search + formatSearchResponse() + runWebSearchTool() shared handler + webSearchToolDefinition
     image-optimizer.ts   # Sharp variants (denoised/saturated/grayscale); graceful fallback
     crop-classifier.ts   # TensorFlow crop classifier; graceful fallback if model/tfjs absent
   utils/
-    message.ts           # splitMessage(), formatUptime()
+    message.ts           # splitMessage(), formatUptime(), sendMarkdownSafe()
   types/
     optional-deps.d.ts   # Ambient declarations for sharp and @tensorflow/tfjs-node (typed as any)
 RAG/
@@ -84,7 +87,9 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **`SYSTEM_BLOCKS` contains the instructions block only.** The knowledge block is assembled dynamically at query time by `BaseAgent.run()` via `retrieveRelevantContext()` from `src/rag/index.ts`.
 - **The dynamically-inserted knowledge block MUST have `cache_control: { type: 'ephemeral' }`.** This is set automatically in `BaseAgent.runAgenticLoop()` — do not remove it.
 - The instructions block in each agent's `SYSTEM_BLOCKS` also carries `cache_control: { type: 'ephemeral' }`.
-- Every text agent uses `webSearchToolDefinition` from `src/tools/web-search.ts`.
+- Every text agent uses `webSearchToolDefinition` from `src/tools/web-search.ts`, and handles the call via the shared `runWebSearchTool()` (per-agent defaults for depth/result count/raw content; plumbs the model-supplied `include_domains` through to Tavily).
+- `BaseAgent.extraContext()` is an overridable hook — agent-specific context appended after the RAG knowledge block (Lead Generation uses it to inject the known-leads pipeline).
+- `runAgenticLoop()` keeps exactly one message-history cache breakpoint on the newest `tool_result` (moved each iteration) so multi-iteration tool runs read prior turns from prompt cache. Do not add more breakpoints — Anthropic allows max 4 total (2 are used by system blocks).
 - `CropDoctorAgent` is the only vision agent — uses `runWithImage()`, which calls `retrieveRelevantContext()` directly before calling `runAgenticLoop()`.
 - New agents must be registered in the `agents` map and `AgentType` union in `src/orchestrator/index.ts`.
 - New agents do **not** need a knowledge bundle in `src/knowledge.ts` — RAG handles retrieval automatically.
@@ -122,10 +127,17 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Pure helpers** (`parseKbCallback`, `normalizeFact`, `isDuplicate`) live in `src/rag/learned-util.ts` — no DB/network imports, so Tier-1 unit tests cover them with no keys.
 - `[learning]` is the log prefix for distillation/approval events.
 
+### Lead Pipeline
+
+- **Store:** `leads` SQLite table (`src/leads/index.ts`), UNIQUE on `dedup_key` = `normalizeLeadKey(name, location)` (pure helper in `src/leads/util.ts` — keep it DB-free for unit tests).
+- **Write path:** the Lead Generation agent calls the `save_lead` tool once per qualified lead; duplicates are rejected by key and reported back to the model.
+- **Read path:** `knownLeadsContext()` is injected via `LeadGenerationAgent.extraContext()` so the agent skips businesses already in the pipeline; `/leads` in Telegram lists the pipeline and `/leads <id> <status>` updates status (`new|contacted|responded|converted|dead`).
+- The weekly report's third section runs the lead agent (`LEADS_QUERY` in `src/scheduler/index.ts`), which dedups against the pipeline automatically.
+
 ### Routing (Orchestrator)
 
 - Stage 1: `KEYWORD_RULES` in `src/orchestrator/index.ts` — regex matching, no API call.
-- Stage 2: Claude Haiku classifier fallback (`max_tokens: 20`, `temperature: 0` for deterministic routing).
+- Stage 2: Claude Haiku classifier fallback (`max_tokens: 20`, `temperature: 0` for deterministic routing). It receives the session's last-used agent (`getLastAgentUsed()` from `src/db/index.ts`) as a hint so short follow-ups ("more", "contact details for #2") stay with the same specialist instead of falling to `general`.
 - Update `KEYWORD_RULES` when adding a new agent.
 - Keyword patterns use `/regex/i`. Use `\b` word boundaries for acronyms.
 - `AgentType` values are **snake_case strings**: `'market_research'`, `'crop_doctor'` — NOT camelCase.
@@ -244,7 +256,7 @@ The production Mac is configured so `urvar-bot` restarts automatically. This is 
 
 Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert` run through `tsx` — **no new dependencies** (mirrors the `node:sqlite` "use built-ins" ethos).
 
-- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor), `formatSearchResponse`, `buildRetrievalQuery`, `routeByKeyword`, `isRetryable`. This is the regression backbone — run it before every commit.
+- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor), `formatSearchResponse` (incl. raw-content truncation), `buildRetrievalQuery`, `routeByKeyword`, `isRetryable`, `normalizeLeadKey`/`isLeadStatus`, `sendMarkdownSafe` (fake bot). This is the regression backbone — run it before every commit.
 - **`npm run test:integration`** — Tier 2 live-API smoke tests (`tests/integration/`). Opt-in only (gated on `RUN_INTEGRATION`, set automatically by the script); needs a real `.env`; makes paid calls. Asserts structural invariants (routing, non-empty grounded response, RAG returns knowledge), not exact text. **Still never mocks the Anthropic SDK** — the value is live behaviour.
 - **`npm run test:eval`** — Tier 3 manual A/B runner (`tests/eval/run.ts`, no assertions). Prints responses + token/cache/iteration stats for representative prompts to compare answer quality before/after a change. Needs a real `.env`.
 - **Env preload:** `tests/setup.ts` (loaded via `--import`) runs `dotenv/config` then fills only *missing* required env vars with placeholders (`??=`). This lets unit tests import modules whose `config.ts` validates env at load time, without real keys; real keys (when a `.env` exists) are never overwritten, so integration/eval still hit live APIs.
@@ -264,11 +276,11 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 
 4. **Memory extraction is non-blocking.** The `void extractAndSaveMemories(...)` call in `src/bot/telegram.ts` must remain `void`-prefixed and must never block or throw on the response path.
 
-5. **splitMessage duplication is known.** `splitMessage()` exists in both `src/utils/message.ts` (canonical) and `src/scheduler/index.ts` (duplicate to fix). Import from utils in the scheduler — do not add a third copy.
+5. **One `splitMessage()`.** The only copy lives in `src/utils/message.ts`; the scheduler imports it from there. Do not re-introduce a local duplicate.
 
 6. **Typing indicator at 4s.** Telegram clears the typing indicator after 5s. The `setInterval` at 4000ms in `src/bot/telegram.ts` is intentional.
 
-7. **Weekly report uses Promise.allSettled.** In `src/scheduler/index.ts` — do not change to `Promise.all`. A single agent failure must not abort the full report.
+7. **Weekly report uses Promise.allSettled.** In `src/scheduler/index.ts` (market + competitive + leads) — do not change to `Promise.all`. A single agent failure must not abort the full report.
 
 8. **Model assignment by cost.** Claude Haiku for cheap tasks (routing, memory extraction). `config.claudeModel` (Sonnet) for all main agent responses.
 
@@ -279,6 +291,8 @@ Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert`
 11. **`RAG/docs/learned.md` is NOT in `DOC_FILES`.** It is a human-readable mirror of approved learned facts. The live store is the `learned_knowledge` table; learned chunks augment the in-memory index only and are never written to `rag-index.json`. Adding learned.md to `DOC_FILES` would force a full curated re-embed on every restart — do not.
 
 12. **Learned knowledge requires owner approval.** Every candidate fact (from `/teach`, conversation/web/periodic distillation) is stored `pending` and only influences answers after the `OWNER_TELEGRAM_ID` user approves it. Never auto-approve non-owner input. The conversation distiller (`void distillConversationToKb(...)`) must stay `void`-prefixed and non-blocking, like memory extraction (#4).
+
+13. **Agent-generated replies go through `sendMarkdownSafe()`.** Agent output contains unpredictable `_`/`*` (URLs, business names) that 400s Telegram's Markdown parser. `sendMarkdownSafe()` (`src/utils/message.ts`) retries as plain text on an entity-parse error — never call `bot.sendMessage(..., { parse_mode: 'Markdown' })` directly with agent-generated text. (Static, known-good strings like /start and /help are fine.)
 
 ---
 

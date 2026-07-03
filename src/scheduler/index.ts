@@ -2,16 +2,22 @@ import cron from 'node-cron';
 import TelegramBot from 'node-telegram-bot-api';
 import { MarketResearchAgent } from '../agents/market-research.js';
 import { CompetitiveAnalysisAgent } from '../agents/competitive-analysis.js';
+import { LeadGenerationAgent } from '../agents/lead-generation.js';
+import { splitMessage, sendMarkdownSafe } from '../utils/message.js';
 import { config } from '../config.js';
 
 const marketAgent = new MarketResearchAgent();
 const competitiveAgent = new CompetitiveAnalysisAgent();
+const leadAgent = new LeadGenerationAgent();
 
 const MARKET_QUERY =
   'Provide a weekly market intelligence briefing for the Indian organic fertilizer and bio-input market. Cover: key trends this week, Amazon/Flipkart pricing movements, regulatory news, seasonal demand outlook, and top growth opportunities for a small vermicompost manufacturer in West Bengal.';
 
 const COMPETITIVE_QUERY =
   'Provide a weekly competitive intelligence briefing for the Indian organic fertilizer market. Cover: any new competitor product launches, changes in competitor Amazon/Flipkart listings or pricing, competitor marketing activity, and identified market gaps that Urvar Natural can exploit this week.';
+
+const LEADS_QUERY =
+  'Find up to 5 NEW qualified B2B leads for Urvar Natural this week — distributors, retailers, nurseries, agri-input shops, or FPOs, prioritising West Bengal and nearby states. Skip any business already in the pipeline. Save each qualified lead with save_lead, and present them with contact details and a one-line outreach angle each. Keep the briefing concise.';
 
 const AGENT_TIMEOUT_MS = 240_000;
 
@@ -24,22 +30,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-function splitMessage(text: string, maxLen = 4096): string[] {
-  if (text.length <= maxLen) return [text];
-  const parts: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLen) {
-      parts.push(remaining);
-      break;
-    }
-    const cutAt = remaining.lastIndexOf('\n', maxLen) > 0
-      ? remaining.lastIndexOf('\n', maxLen)
-      : maxLen;
-    parts.push(remaining.slice(0, cutAt));
-    remaining = remaining.slice(cutAt).trimStart();
+async function sendSection(bot: TelegramBot, chatId: TelegramBot.ChatId, text: string): Promise<void> {
+  for (const chunk of splitMessage(text)) {
+    await sendMarkdownSafe(bot, chatId, chunk);
   }
-  return parts;
 }
 
 export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
@@ -52,33 +46,26 @@ export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.Cha
   });
 
   const start = Date.now();
-  const [marketResult, competitiveResult] = await Promise.allSettled([
+  const [marketResult, competitiveResult, leadsResult] = await Promise.allSettled([
     withTimeout(marketAgent.run(MARKET_QUERY, []), AGENT_TIMEOUT_MS, 'Market Research'),
     withTimeout(competitiveAgent.run(COMPETITIVE_QUERY, []), AGENT_TIMEOUT_MS, 'Competitive Analysis'),
+    withTimeout(leadAgent.run(LEADS_QUERY, []), AGENT_TIMEOUT_MS, 'Lead Generation'),
   ]);
   console.log(
-    `[scheduler] Market Research: ${marketResult.status}, Competitive Analysis: ${competitiveResult.status} (${Date.now() - start}ms)`,
+    `[scheduler] Market Research: ${marketResult.status}, Competitive Analysis: ${competitiveResult.status}, Lead Generation: ${leadsResult.status} (${Date.now() - start}ms)`,
   );
 
-  // Market Intelligence section
-  const marketText =
-    marketResult.status === 'fulfilled'
-      ? marketResult.value.response
-      : `⚠️ Market intelligence unavailable: ${(marketResult.reason as Error).message}`;
+  const sectionText = <T extends { response: string }>(
+    result: PromiseSettledResult<T>,
+    label: string,
+  ): string =>
+    result.status === 'fulfilled'
+      ? result.value.response
+      : `⚠️ ${label} unavailable: ${(result.reason as Error).message}`;
 
-  await bot.sendMessage(chatId, `*📈 Market Intelligence*\n\n${marketText}`.slice(0, 4096), {
-    parse_mode: 'Markdown',
-  });
-
-  // Competitive Intelligence section
-  const compText =
-    competitiveResult.status === 'fulfilled'
-      ? competitiveResult.value.response
-      : `⚠️ Competitive intelligence unavailable: ${(competitiveResult.reason as Error).message}`;
-
-  for (const chunk of splitMessage(`*🔍 Competitive Intelligence*\n\n${compText}`)) {
-    await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
-  }
+  await sendSection(bot, chatId, `*📈 Market Intelligence*\n\n${sectionText(marketResult, 'Market intelligence')}`);
+  await sendSection(bot, chatId, `*🔍 Competitive Intelligence*\n\n${sectionText(competitiveResult, 'Competitive intelligence')}`);
+  await sendSection(bot, chatId, `*🤝 New Leads This Week*\n\n${sectionText(leadsResult, 'Lead generation')}`);
 }
 
 export function startScheduler(bot: TelegramBot): void {

@@ -88,6 +88,10 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
   { pattern: /\bFPO\b|farmer\s+producer\s+org/i, agent: 'lead_generation' },
   { pattern: /b2b\s+(prospect|lead|partner|customer)/i, agent: 'lead_generation' },
   { pattern: /outreach\s+(message|template|email)\s+for\s+(dealer|distributor|retailer)/i, agent: 'lead_generation' },
+  // Common Indian trade vocabulary for channel partners
+  { pattern: /\b(stockists?|wholesalers?|dealerships?)\b/i, agent: 'lead_generation' },
+  { pattern: /\bagro[\s-]?(dealers?|distributors?|input\s+(shops?|dealers?|stores?))\b/i, agent: 'lead_generation' },
+  { pattern: /\bkrishi\s+seva\s+kendra/i, agent: 'lead_generation' },
 
   { pattern: /crop\s+doctor|plant\s+doctor|diagnos(e|is)/i, agent: 'crop_doctor' },
   { pattern: /(yellow|wilting|drooping|dying|spots?|blight|rot|rust|mold|mould)\s+(leaves?|plant|crop)/i, agent: 'crop_doctor' },
@@ -106,8 +110,14 @@ export function routeByKeyword(message: string): AgentType | null {
   return null;
 }
 
-// Stage 2: Claude Haiku classifier (fallback)
-async function routeByClaude(message: string): Promise<AgentType> {
+// Stage 2: Claude Haiku classifier (fallback). `lastAgent` keeps short
+// follow-ups ("more like #3", "contact details for the second one") in the
+// conversation's current specialist instead of dropping to 'general'.
+async function routeByClaude(message: string, lastAgent: AgentType | null): Promise<AgentType> {
+  const followUpHint =
+    lastAgent && lastAgent !== 'general'
+      ? `\n\nContext: the previous message in this conversation was handled by the "${lastAgent}" specialist. If this message is a short follow-up to that conversation (e.g. "more", "what about the second one", "get contact details"), choose "${lastAgent}".`
+      : '';
   const response = await classifierClient.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 20,
@@ -127,7 +137,7 @@ Categories:
 - product_info: factual questions about Urvar's OWN products or company — pack sizes, pricing, dosage, application, composition/nutrients, which product to use, certifications, company facts
 - general: greetings, thanks, unclear, or off-topic (non-Urvar, non-agriculture) messages only
 
-Message: "${message.slice(0, 500)}"`,
+Message: "${message.slice(0, 500)}"${followUpHint}`,
       },
     ],
   });
@@ -143,13 +153,14 @@ Message: "${message.slice(0, 500)}"`,
 export async function runOrchestrator(
   userMessage: string,
   history: MessageParam[],
+  lastAgent: AgentType | null = null,
 ): Promise<OrchestratorResult> {
-  const agentType = routeByKeyword(userMessage) ?? await routeByClaude(userMessage);
+  const agentType = routeByKeyword(userMessage) ?? await routeByClaude(userMessage, lastAgent);
 
   if (agentType === 'general') {
     return {
       agentUsed: 'general',
-      response: 'I can help with market research, competitive analysis, product R&D, sales & marketing content, and lead generation for Urvar Natural. What would you like to explore?',
+      response: 'I can help with market research, competitive analysis, product R&D, sales & marketing content, lead generation, product & pricing questions, and crop disease diagnosis (send a photo!) for Urvar Natural. What would you like to explore?',
       iterations: 0,
       tokensIn: 0,
       tokensOut: 0,

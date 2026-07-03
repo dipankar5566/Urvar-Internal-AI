@@ -1,12 +1,13 @@
 import TelegramBot from 'node-telegram-bot-api';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
-import { appendHistory, getHistory, clearHistory } from '../db/index.js';
+import { appendHistory, getHistory, clearHistory, getLastAgentUsed } from '../db/index.js';
 import { getMemories, clearMemories, extractAndSaveMemories } from '../memory/index.js';
-import { runOrchestrator } from '../orchestrator/index.js';
+import { runOrchestrator, type AgentType } from '../orchestrator/index.js';
 import { sendWeeklyReport } from '../scheduler/index.js';
 import { cropDoctorAgent, fetchTelegramImage } from '../agents/crop-doctor.js';
-import { splitMessage, formatUptime, formatUsageFooter } from '../utils/message.js';
+import { splitMessage, formatUptime, formatUsageFooter, sendMarkdownSafe } from '../utils/message.js';
+import { listLeads, updateLeadStatus, isLeadStatus, LEAD_STATUSES } from '../leads/index.js';
 import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending } from '../rag/learned.js';
 import { proposeAndNotify, distillConversationToKb, distillAgronomyToKb, notifyOwnerOfPending } from '../learning/index.js';
 import { parseKbCallback } from '../rag/learned-util.js';
@@ -78,7 +79,7 @@ export function createBot(): TelegramBot {
   bot.onText(/\/help/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
-      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: write Amazon listings, Instagram captions, WhatsApp messages, email campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /teach /pending`,
+      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: write Amazon listings, Instagram captions, WhatsApp messages, email campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India — found leads are saved to a pipeline, view with /leads\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /leads /teach /pending`,
       { parse_mode: 'Markdown' },
     );
   });
@@ -104,6 +105,50 @@ export function createBot(): TelegramBot {
     try {
       await sendWeeklyReport(bot, msg.chat.id);
     } catch (err) {
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
+  // /leads — view the persistent B2B lead pipeline saved by the Lead Generation
+  // agent. Forms: `/leads` (recent), `/leads contacted` (filter by status),
+  // `/leads 12 contacted` (update lead 12's status).
+  bot.onText(/^\/leads(?:\s+(\S+))?(?:\s+(\S+))?$/, async (msg, match) => {
+    const arg1 = match?.[1]?.toLowerCase() ?? '';
+    const arg2 = match?.[2]?.toLowerCase() ?? '';
+    try {
+      // Status update: /leads <id> <status>
+      if (/^\d+$/.test(arg1)) {
+        if (!isLeadStatus(arg2)) {
+          await bot.sendMessage(msg.chat.id, `Usage: /leads <id> <${LEAD_STATUSES.join('|')}>`);
+          return;
+        }
+        const ok = updateLeadStatus(Number(arg1), arg2);
+        await bot.sendMessage(msg.chat.id, ok ? `✅ Lead ${arg1} → ${arg2}` : `⚠️ No lead with id ${arg1}.`);
+        return;
+      }
+
+      const status = isLeadStatus(arg1) ? arg1 : undefined;
+      if (arg1 && !status) {
+        await bot.sendMessage(msg.chat.id, `Unknown status "${arg1}". Statuses: ${LEAD_STATUSES.join(', ')}`);
+        return;
+      }
+      const leads = listLeads(status);
+      if (leads.length === 0) {
+        await bot.sendMessage(msg.chat.id, status ? `No leads with status "${status}".` : '📭 No leads in the pipeline yet — ask me to find some!');
+        return;
+      }
+      const lines = leads.map((l) => {
+        const contact = l.contact ? `\n   ${l.contact}` : '';
+        return `#${l.id} [${l.status}] ${l.name} — ${l.type}, ${l.location}${contact}`;
+      });
+      const header = `🤝 Lead pipeline (${leads.length}${status ? ` ${status}` : ''}):\n\n`;
+      const footer = `\n\nUpdate: /leads <id> <${LEAD_STATUSES.join('|')}>`;
+      // Plain text — lead names/contacts routinely break Markdown parsing.
+      for (const chunk of splitMessage(header + lines.join('\n\n') + footer)) {
+        await bot.sendMessage(msg.chat.id, chunk);
+      }
+    } catch (err) {
+      console.error(`[bot] /leads error for chat ${msg.chat.id}:`, err);
       await bot.sendMessage(msg.chat.id, getUserFacingError(err));
     }
   });
@@ -254,7 +299,7 @@ export function createBot(): TelegramBot {
       const footer = isOwner(fromId) ? formatUsageFooter(result!) : '';
       const fullText = `_🌿 Crop Doctor_\n\n${result!.response}` + (footer ? `\n\n${footer}` : '');
       for (const chunk of splitMessage(fullText)) {
-        await bot.sendMessage(numericChatId, chunk, { parse_mode: 'Markdown' });
+        await sendMarkdownSafe(bot, numericChatId, chunk);
       }
 
       // Distil only general, reusable agronomy facts from the diagnosis (gated by
@@ -350,7 +395,8 @@ export function createBot(): TelegramBot {
              ...history]
           : history;
 
-        result = await runOrchestrator(userText, messagesWithContext);
+        const lastAgent = getLastAgentUsed(chatId) as AgentType | null;
+        result = await runOrchestrator(userText, messagesWithContext, lastAgent);
       } finally {
         clearInterval(typingInterval);
       }
@@ -371,7 +417,7 @@ export function createBot(): TelegramBot {
       const fullText = header + result!.response + (footer ? `\n\n${footer}` : '');
 
       for (const chunk of splitMessage(fullText)) {
-        await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+        await sendMarkdownSafe(bot, msg.chat.id, chunk);
       }
 
       // Extract memories every 3 turns (async, non-blocking)

@@ -30,3 +30,19 @@ test('results-only response omits the answer summary', () => {
 test('empty response returns the no-results sentinel', () => {
   assert.equal(formatSearchResponse({ answer: null, results: [] }), 'No search results found.');
 });
+
+test('raw page content is included and truncated at the cap', () => {
+  const long = 'x'.repeat(2000);
+  const out = formatSearchResponse({
+    answer: null,
+    results: [{ title: 'Dir', url: 'https://d.test', content: 'Snippet.', score: 0.7, raw_content: long }],
+  });
+  assert.ok(out.includes('Page content: '));
+  assert.ok(out.includes('x'.repeat(1500) + '…'));
+  assert.ok(!out.includes('x'.repeat(1501)));
+});
+
+test('results without raw content render unchanged', () => {
+  const out = formatSearchResponse({ answer: null, results });
+  assert.ok(!out.includes('Page content:'));
+});

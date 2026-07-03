@@ -1,3 +1,5 @@
+import type TelegramBot from 'node-telegram-bot-api';
+
 export function splitMessage(text: string, maxLen = 4096): string[] {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
@@ -34,6 +36,29 @@ export function formatUsageFooter(u: UsageLike): string {
     (u.tokensIn * 3 + u.tokensOut * 15 + u.cacheRead * 0.3 + u.cacheWrite * 3.75) / 1_000_000;
   const n = (x: number): string => x.toLocaleString('en-US');
   return `_↳ ${n(u.tokensIn)} in · ${n(u.tokensOut)} out · ${n(u.cacheRead)} cached · ~$${cost.toFixed(4)}_`;
+}
+
+// Agent output routinely contains URLs and business names with _ and * that
+// break Telegram's Markdown parser and 400 the whole message. Matches the
+// node-telegram-bot-api error text for entity-parse failures.
+export function isMarkdownParseError(err: unknown): boolean {
+  return err instanceof Error && /can'?t parse entities/i.test(err.message);
+}
+
+// Send with Markdown; on a parse error, resend the same text as plain text so
+// the user still gets the content. All agent-generated replies (unpredictable
+// text) must go through this instead of bot.sendMessage(..., parse_mode).
+export async function sendMarkdownSafe(
+  bot: TelegramBot,
+  chatId: TelegramBot.ChatId,
+  text: string,
+): Promise<void> {
+  try {
+    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+  } catch (err) {
+    if (!isMarkdownParseError(err)) throw err;
+    await bot.sendMessage(chatId, text);
+  }
 }
 
 export function formatUptime(startMs: number): string {
