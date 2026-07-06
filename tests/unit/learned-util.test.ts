@@ -1,6 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKbCallback, normalizeFact, isDuplicate, categoryForSource } from '../../src/rag/learned-util.js';
+import { parseKbCallback, normalizeFact, isDuplicate, categoryForSource, parseFactsResponse } from '../../src/rag/learned-util.js';
+
+test('parseFactsResponse extracts a clean JSON array', () => {
+  assert.deepEqual(parseFactsResponse('["fact one", "fact two"]'), ['fact one', 'fact two']);
+});
+
+test('parseFactsResponse tolerates prose and code fences around the array', () => {
+  assert.deepEqual(parseFactsResponse('Here are the facts:\n```json\n["a"]\n```'), ['a']);
+});
+
+test('parseFactsResponse returns [] for an explicit empty array (nothing qualified)', () => {
+  assert.deepEqual(parseFactsResponse('[]'), []);
+});
+
+test('parseFactsResponse drops non-string and blank entries', () => {
+  assert.deepEqual(parseFactsResponse('["ok", 42, "", "  ", null]'), ['ok']);
+});
+
+test('parseFactsResponse returns null when the model ignored the format', () => {
+  // The failure mode that silently killed learning: a prose reply, no array.
+  assert.equal(parseFactsResponse('I cannot provide a market briefing because…'), null);
+  // Truncated mid-array (max_tokens) — unparseable, must read as failure.
+  assert.equal(parseFactsResponse('["fact one", "fact tw'), null);
+  assert.equal(parseFactsResponse(''), null);
+});
 
 test('categoryForSource maps crop_doctor to agronomy and everything else to business', () => {
   assert.equal(categoryForSource('crop_doctor'), 'agronomy');

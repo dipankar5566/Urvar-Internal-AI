@@ -45,6 +45,23 @@ export function normalizeFact(fact: string): string {
     .replace(/\.$/, '');
 }
 
+// Parse the distiller's response into fact strings. The contract is a JSON
+// array, possibly wrapped in prose or a code fence. Returns null when no
+// complete array is present at all — the model ignored the output format (or
+// hit the token cap mid-array) — which callers must treat as a distiller
+// failure worth logging, NOT as "no facts found" ([] means that).
+export function parseFactsResponse(text: string): string[] | null {
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return null;
+  try {
+    const parsed: unknown = JSON.parse(match[0]);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((f): f is string => typeof f === 'string' && f.trim().length > 0);
+  } catch {
+    return null;
+  }
+}
+
 // A candidate is a duplicate if its normalized form exactly matches, or is fully
 // contained in / contains, any existing normalized fact. Cheap substring check —
 // good enough to stop obvious repeats without embedding every proposal.

@@ -44,14 +44,14 @@ src/
   orchestrator/
     index.ts             # 2-stage routing: regex KEYWORD_RULES → Haiku classifier fallback (with last-agent follow-up hint)
   bot/
-    telegram.ts          # All Telegram handlers (/start /help /clear /ping /report /leads, message, photo)
+    telegram.ts          # All Telegram handlers (/start /help /clear /ping /report /leads /enrich /callsheet /pitch /article, message, photo)
   scheduler/
-    index.ts             # Weekly cron Monday 09:00 IST; exports sendWeeklyReport() (market + competitive + leads)
+    index.ts             # Crons: weekly report Mon 09:00 IST (group), call sheet + content draft (owner); exports sendWeeklyReport()/sendCallSheet()/sendContentDraft()
   db/
     index.ts             # node:sqlite schema, prepared statements, appendHistory/getHistory/getLastAgentUsed
   leads/
     index.ts             # Persistent B2B lead pipeline (leads table) + save_lead tool definition
-    util.ts              # Pure helpers: normalizeLeadKey(), lead statuses — no DB imports (unit-testable)
+    util.ts              # Pure helpers: normalizeLeadKey(), statuses, pitch/call-sheet/enrichment prompt builders, formatFunnel() — no DB imports (unit-testable)
   tools/
     web-search.ts        # Tavily search + formatSearchResponse() + runWebSearchTool() shared handler + webSearchToolDefinition
     image-optimizer.ts   # Sharp variants (denoised/saturated/grayscale); graceful fallback
@@ -125,7 +125,7 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Runtime store is DB-backed, not a curated doc.** Approved facts live in the `learned_knowledge` SQLite table **with their 512-dim embedding persisted** (`src/rag/learned.ts`). They are injected into the in-memory index via `appendLearnedChunk()` (`src/rag/index.ts`) at approval time (real-time, no restart) and at startup (`loadApprovedLearned()` → wired from `src/index.ts`, not `rag/index.ts`, to avoid a circular import).
 - **Category (`business` | `agronomy`).** Every fact carries a category, derived from its source by `categoryForSource()` (`crop_doctor` → agronomy, all else → business). Retrieval is category-scoped (see RAG section) so agronomy facts don't crowd business-intelligence retrieval. The column is added by an additive migration that backfills existing rows from `source`.
 - **Never written to `rag-index.json`.** Only `buildIndex` writes that file. Learned chunks augment the in-memory copy only, so the curated docs hash stays stable and curated chunks are never re-embedded. `RAG/docs/learned.md` is a human-readable **mirror only — NOT in `DOC_FILES`** (adding it would force a full curated re-embed).
-- **Sources** (all funnel into `proposeLearned` → pending → owner review): `/teach` command; per-conversation distillation (every 3 turns, `distillConversationToKb`, `void`-prefixed — the single non-blocking learning call on the response path); captured web research (ring buffer in `src/tools/web-search.ts`, now capturing the top result snippets too, drained by the cron); periodic self-summary (`KB_DISTILL_CRON`, `src/learning/index.ts`). All distillation uses Haiku and logs failures under `[learning]` (no longer silently swallowed).
+- **Sources** (all funnel into `proposeLearned` → pending → owner review): `/teach` command; per-conversation distillation (every 3 turns, `distillConversationToKb`, `void`-prefixed — the single non-blocking learning call on the response path); captured web research (ring buffer in `src/tools/web-search.ts`, now capturing the top result snippets too, drained by the cron); periodic self-summary (`KB_DISTILL_CRON`, `src/learning/index.ts`). All distillation uses Haiku and logs failures under `[learning]` (no longer silently swallowed). **The distiller prompt is instruction-hardened:** extraction rules live in the `system` prompt and are repeated after the material, and the material block is capped (`MATERIAL_CHAR_CAP`, tail-kept) — a single instruction above a ~30k-token report-laden history got drowned and Haiku replied to the conversation instead of extracting (silent zero-fact runs for weeks). A response with no parseable JSON array (`parseFactsResponse` → `null`, pure helper in `learned-util.ts`) is logged as a distiller failure, distinct from `[]` = "nothing qualified"; every stage logs `distilled/proposed/deduped` counts.
 - **Approval is owner-only.** `OWNER_TELEGRAM_ID` is the sole approver. `/teach` by the owner auto-approves; everyone else's input is queued and sent to the owner with inline ✅/✏️/❌ buttons (`callback_data` = `kb:<action>:<id>`, parsed by `parseKbCallback`). If `OWNER_TELEGRAM_ID` is unset, learning degrades gracefully: proposals stay `pending`, `/teach` tells the user no owner is configured.
 - **Two-stage dedup.** At propose time a cheap substring check (`isDuplicate`) drops obvious repeats. At **approval** time, `approveLearned()` embeds the fact (needed anyway) and rejects it as a near-duplicate if its cosine similarity to any existing approved fact **of the same category** exceeds `config.kbSemanticDedupThreshold` (default `0.92`). `approveLearned` returns a tagged `ApproveResult` (`approved` | `duplicate` | `not_pending`) — all three call sites in `telegram.ts` handle each case.
 - **Consolidation (non-destructive).** `findDuplicateClusters()` flags approved near-duplicate pairs; the daily cron reports them to the owner and `/kbstats` shows counts by category/source/status plus flagged pairs. Nothing is auto-deleted.
@@ -137,8 +137,14 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 
 - **Store:** `leads` SQLite table (`src/leads/index.ts`), UNIQUE on `dedup_key` = `normalizeLeadKey(name, location)` (pure helper in `src/leads/util.ts` — keep it DB-free for unit tests).
 - **Write path:** the Lead Generation agent calls the `save_lead` tool once per qualified lead; duplicates are rejected by key and reported back to the model.
-- **Read path:** `knownLeadsContext()` is injected via `LeadGenerationAgent.extraContext()` so the agent skips businesses already in the pipeline; `/leads` in Telegram lists the pipeline and `/leads <id> <status>` updates status (`new|contacted|responded|converted|dead`).
-- The weekly report's third section runs the lead agent (`LEADS_QUERY` in `src/scheduler/index.ts`), which dedups against the pipeline automatically.
+- **Read path:** `knownLeadsContext()` is injected via `LeadGenerationAgent.extraContext()` so the agent skips businesses already in the pipeline; `/leads` in Telegram lists the pipeline (flagging entries with no contact) and `/leads <id> <status>` updates status (`new|contacted|responded|converted|dead`).
+- **Contact-first output:** phone numbers are the priority (sales works leads via calls/WhatsApp/field visits). The agent presents leads in two tiers — "✅ Ready to contact" (phone found) and "🔎 Needs contact research" — and saves both tiers to the pipeline. It spends at most one extra batched search round hunting phones before answering (interactive queries stay within the normal iteration budget).
+- **Enrichment (`/enrich`):** off the interactive path. `listLeadsMissingContact()` (active leads whose contact has no detectable phone number per `hasPhoneNumber()` — the agent often stores an address or an IndiaMART "View Mobile Number" stub, so an empty-column check is not enough; max 8/run) feeds `buildEnrichmentPrompt()` (pure helper in `src/leads/util.ts`); the lead agent researches phone numbers and writes them back via the `update_lead` tool (`updateLeadContact()` — **replaces** `contact`, so the prompt tells the model to merge in the details already known; keeps existing `source_url` unless a new one is given). `update_lead` is only for existing leads listed by id; new leads always go through `save_lead`.
+- The weekly report's third section runs the lead agent (`LEADS_QUERY` in `src/scheduler/index.ts`), which dedups against the pipeline automatically; its header shows the funnel counts (`formatFunnel(leadFunnelCounts())` + leads added this week), as does `/leads`.
+- **Sales outreach (the pipeline's read-out-loud path):** the Sales & Marketing agent is the B2B outreach + website-SEO copywriter (WhatsApp intros, call scripts, dealer pitches, articles — NOT marketplace/social listings unless explicitly asked). It grounds pitches in the pipeline via `SalesMarketingAgent.extraContext()` → `salesLeadsContext()`.
+- **Call sheet** (`/callsheet` + `CALL_SHEET_CRON`, default Monday 08:30 IST to the owner): `listCallReadyLeads()` picks workable leads **with a phone number**, priority `responded > new > contacted` (oldest first within a group); if short, it runs one `/enrich`-style round first. `buildCallSheetPrompt()` (pure, `src/leads/util.ts`) formats the briefing task; a deterministic footer prints the exact `/leads <id> contacted` commands.
+- **`/pitch <id>`**: `getLead()` + `buildPitchPrompt()` (pure) → sales agent drafts a ready-to-send WhatsApp intro + 30s call opener for that specific lead.
+- **Content engine** (`/article [topic]` + `CONTENT_CRON`, default Wednesday 09:00 IST to the owner): the sales agent writes one seasonal website SEO article grounded in RAG docs (`sendContentDraft()`).
 
 ### Routing (Orchestrator)
 
@@ -326,6 +332,8 @@ OWNER_TELEGRAM_ID=                  # unset = auto-learning degrades; proposals 
 KB_LEARNING_ENABLED=true            # false disables /teach + all distillation
 KB_DISTILL_CRON=0 8 * * *           # periodic distillation schedule (IST)
 KB_SEMANTIC_DEDUP_THRESHOLD=0.92    # cosine ceiling; approvals above it are auto-rejected as near-duplicates
+CALL_SHEET_CRON=30 8 * * 1          # prioritized calling list to the owner (IST); skipped if OWNER_TELEGRAM_ID unset
+CONTENT_CRON=0 9 * * 3              # weekly website SEO article draft to the owner (IST); skipped if OWNER_TELEGRAM_ID unset
 ```
 
 ---

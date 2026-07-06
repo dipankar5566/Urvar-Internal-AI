@@ -71,3 +71,27 @@ approval flow (`/teach`, or the ✏️ Edit button).
 - Zinc deficiency in citrus causes yellowing between veins, while mite infestation causes stippling and yellowing across leaves  _(source: web_research, approved 2026-06-16)_
 
 - Organic treatments for citrus mite leaf damage include predatory mites and horticultural oil sprays applied every 3-4 weeks  _(source: web_research, approved 2026-06-16)_
+
+- India's agricultural biologicals market: USD 700–900 million, growing 12–15% annually (KAKV/Global Agriculture, 2 July 2026); exceeds organic fertilizer sub-segment's 7.5–8.5% CAGR  _(source: periodic, category: business, approved 2026-07-05)_
+
+- Manufacturing infrastructure identified as largest untapped opportunity in biologicals sector (KAKV report, 2 July 2026)  _(source: periodic, category: business, approved 2026-07-05)_
+
+- Central government political backing for biofertilizers demonstrated at CM level across NE India; CSIR-NEIST Bioreactor Biofertilizer Unit inaugurated in Manipur, 2 July 2026  _(source: periodic, category: business, approved 2026-07-05)_
+
+- Credible home-garden vermicompost pricing band: ₹51–₹85/kg delivered; 5kg pack price corridor ₹255–₹425 MRP (Amazon/Flipkart benchmark, week of 29 June–5 July 2026)  _(source: periodic, category: business, approved 2026-07-05)_
+
+- Urvar's FCO registration (UDYAM-WB-14-0115346) is competitive differentiator following Rajasthan fake-fertilizer raids; FCO labeling now reputational risk for unlicensed competitors (mid-June 2026)  _(source: periodic, category: business, approved 2026-07-05)_
+
+- Iron deficiency causes interveinal chlorosis (pale yellow between veins while veins remain green) on new leaves first; treat with Ferrous sulphate 1–2 gm/litre foliar spray or Humic Acid Liquid 3 ml/litre soil drench  _(source: crop_doctor, category: agronomy, approved 2026-07-05)_
+
+- Spider mite infestation causes fine stippling and bronzed, dull leaf surface; control by water spray on leaf undersides every 3–4 days, then neem oil 3–5 ml/litre + dish soap in evening, repeat after 7 days  _(source: crop_doctor, category: agronomy, approved 2026-07-05)_
+
+- Alkaline soil pH above 6.5–7.0 locks iron availability even when iron is present; correct by repotting with slightly acidic mix (garden soil + vermicompost + sand 2:1:1) and using rainwater or acidified tap water for irrigation  _(source: crop_doctor, category: agronomy, approved 2026-07-05)_
+
+- Zinc deficiency causes interveinal chlorosis on new leaves similar to iron deficiency but with smaller leaves and shortened internodes; treat with Zinc EDTA 12% at 3–5 gm per 20 litres foliar spray, 2 applications 10 days apart  _(source: crop_doctor, category: agronomy, approved 2026-07-05)_
+
+- Vermicompost naturally acidifies root zone, chelates micronutrients including iron, and suppresses mite populations; apply 150–200 gm mixed into top 5 cm of pot soil or include in fresh potting mix  _(source: crop_doctor, category: agronomy, approved 2026-07-05)_
+
+- West Bengal soils have documented zinc deficiency; Zinc EDTA 12% is relevant for paddy at 30–35 DAS (tillering stage); low-medium priority vs. kharif basal products  _(source: periodic, category: business, approved 2026-07-06)_
+
+- Kharif basal application window for paddy and vegetables is July–August; vermicompost and FYM are critical inputs during this 4-week period  _(source: periodic, category: business, approved 2026-07-06)_
