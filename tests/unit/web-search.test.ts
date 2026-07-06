@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatSearchResponse } from '../../src/tools/web-search.js';
+import { formatSearchResponse, isTransientFetchError } from '../../src/tools/web-search.js';
 import type { SearchResult } from '../../src/tools/web-search.js';
 
 const results: SearchResult[] = [
@@ -45,4 +45,17 @@ test('raw page content is included and truncated at the cap', () => {
 test('results without raw content render unchanged', () => {
   const out = formatSearchResponse({ answer: null, results });
   assert.ok(!out.includes('Page content:'));
+});
+
+test('isTransientFetchError: abort timeout and network drops are transient', () => {
+  assert.equal(isTransientFetchError(new DOMException('This operation was aborted', 'AbortError')), true);
+  const fetchFailed = new TypeError('fetch failed');
+  (fetchFailed as Error & { cause?: { code?: string } }).cause = { code: 'ECONNRESET' };
+  assert.equal(isTransientFetchError(fetchFailed), true);
+  assert.equal(isTransientFetchError(new Error('read ETIMEDOUT')), true);
+});
+
+test('isTransientFetchError: application errors fail fast', () => {
+  assert.equal(isTransientFetchError(new Error('Tavily API error: 401 Unauthorized')), false);
+  assert.equal(isTransientFetchError('not an error'), false);
 });

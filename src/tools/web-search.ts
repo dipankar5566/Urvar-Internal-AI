@@ -57,14 +57,52 @@ export function drainRecentSearches(): RecentSearch[] {
   return recentSearches.splice(0, recentSearches.length);
 }
 
+const TAVILY_TIMEOUT_MS = 15_000;
+const TAVILY_ATTEMPTS = 2;
+const TRANSIENT_CODES = /ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|fetch failed/;
+
+// Timeouts and connection drops on a flaky network are worth one retry;
+// anything else (bad request, auth) fails fast.
+export function isTransientFetchError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return true;
+  if (err instanceof Error) {
+    const cause = (err as { cause?: { code?: string } }).cause;
+    return TRANSIENT_CODES.test(cause?.code ?? err.message);
+  }
+  return false;
+}
+
 export async function webSearch(
   query: string,
   maxResults = 5,
   searchDepth: 'basic' | 'advanced' = 'basic',
   options: WebSearchOptions = {},
 ): Promise<WebSearchResponse> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < TAVILY_ATTEMPTS; attempt++) {
+    try {
+      return await tavilySearch(query, maxResults, searchDepth, options);
+    } catch (err) {
+      if (!isTransientFetchError(err)) throw err;
+      lastError = err;
+      console.error(`[bot] Tavily search attempt ${attempt + 1}/${TAVILY_ATTEMPTS} failed:`, err);
+    }
+  }
+  // AbortError's message ("This operation was aborted") is opaque to the model.
+  if (lastError instanceof DOMException && lastError.name === 'AbortError') {
+    throw new Error(`web search timed out (${TAVILY_ATTEMPTS} attempts of ${TAVILY_TIMEOUT_MS / 1000}s each)`);
+  }
+  throw lastError;
+}
+
+async function tavilySearch(
+  query: string,
+  maxResults: number,
+  searchDepth: 'basic' | 'advanced',
+  options: WebSearchOptions,
+): Promise<WebSearchResponse> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const timeout = setTimeout(() => controller.abort(), TAVILY_TIMEOUT_MS);
 
   try {
     const response = await fetch('https://api.tavily.com/search', {

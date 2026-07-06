@@ -170,8 +170,25 @@ export abstract class BaseAgent {
       const toolResults: ToolResultBlockParam[] = [];
       for (const block of toolUseBlocks) {
         const toolBlock = block as { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
-        const result = await this.handleToolCall(toolBlock.name, toolBlock.input);
-        toolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: result });
+        // A failed tool call (e.g. a Tavily timeout on a flaky network) must not
+        // discard the whole run — report it as an errored tool_result so the
+        // model can retry the call or synthesize from what it already has.
+        let result: string;
+        let isError = false;
+        try {
+          result = await this.handleToolCall(toolBlock.name, toolBlock.input);
+        } catch (err) {
+          isError = true;
+          const reason = err instanceof Error ? err.message : String(err);
+          result = `Tool "${toolBlock.name}" failed: ${reason}. You may retry it (perhaps with a different query) or continue with the information already gathered.`;
+          console.error(`[bot] tool ${toolBlock.name} failed:`, err);
+        }
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolBlock.id,
+          content: result,
+          ...(isError ? { is_error: true } : {}),
+        });
       }
 
       // Keep exactly one message-history cache breakpoint, on the newest
