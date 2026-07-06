@@ -24,6 +24,12 @@ export const config = {
   // extended thinking + multiple searches; 240s proved too tight in production.
   reportAgentTimeoutMs: parseInt(process.env['REPORT_AGENT_TIMEOUT_MS'] ?? '360000', 10),
 
+  // Sales cadence crons (IST). Call sheet: prioritized phone-ready leads with
+  // pitch lines, sent to the owner. Content draft: one SEO article for the
+  // website. Both skip gracefully when OWNER_TELEGRAM_ID is unset.
+  callSheetCron: process.env['CALL_SHEET_CRON'] ?? '30 8 * * 1', // Monday 08:30 IST
+  contentCron: process.env['CONTENT_CRON'] ?? '0 9 * * 3', // Wednesday 09:00 IST
+
   // Auto-learning knowledge base. ownerTelegramId is the only user allowed to
   // approve learned facts; if unset, auto-learning degrades gracefully (proposals
   // are stored as pending and logged, but no approval routing happens).

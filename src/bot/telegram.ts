@@ -6,7 +6,11 @@ import { runOrchestrator, type AgentType } from '../orchestrator/index.js';
 import { sendWeeklyReport } from '../scheduler/index.js';
 import { cropDoctorAgent, fetchTelegramImage } from '../agents/crop-doctor.js';
 import { splitMessage, formatUptime, formatUsageFooter, sendMarkdownSafe } from '../utils/message.js';
-import { listLeads, updateLeadStatus, isLeadStatus, LEAD_STATUSES } from '../leads/index.js';
+import { listLeads, updateLeadStatus, isLeadStatus, LEAD_STATUSES, listLeadsMissingContact, getLead, leadFunnelCounts } from '../leads/index.js';
+import { buildEnrichmentPrompt, buildPitchPrompt, formatFunnel, hasPhoneNumber } from '../leads/util.js';
+import { leadGenerationAgent } from '../agents/lead-generation.js';
+import { salesMarketingAgent } from '../agents/sales-marketing.js';
+import { sendCallSheet, sendContentDraft } from '../scheduler/index.js';
 import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending, getKbStats, findDuplicateClusters } from '../rag/learned.js';
 import { proposeAndNotify, distillConversationToKb, distillAgronomyToKb, notifyOwnerOfPending } from '../learning/index.js';
 import { parseKbCallback } from '../rag/learned-util.js';
@@ -69,7 +73,7 @@ export function createBot(): TelegramBot {
     turnCounters.set(chatId, 0);
     await bot.sendMessage(
       msg.chat.id,
-      `👋 *Welcome to Urvar AI Assistant!*\n\nI'm your business intelligence hub for Urvar Natural Pvt. Ltd. I can help with:\n\n📈 *Market Research* — market trends, pricing, demand analysis\n🔍 *Competitive Analysis* — competitor profiling, positioning\n🧪 *R&D / Product Development* — new products, formulations, certifications\n📣 *Sales & Marketing* — content creation, Amazon listings, campaigns\n🤝 *Lead Generation* — finding distributors, retailers, FPOs\n🌿 *Crop Doctor* — send a photo of a sick plant for diagnosis and Urvar product recommendations\n\n📊 Weekly business briefings are sent every *Monday at 9:00 AM IST*.\n\nJust ask me anything — or send a crop photo!`,
+      `👋 *Welcome to Urvar AI Assistant!*\n\nI'm your business intelligence hub for Urvar Natural Pvt. Ltd. I can help with:\n\n📈 *Market Research* — market trends, pricing, demand analysis\n🔍 *Competitive Analysis* — competitor profiling, positioning\n🧪 *R&D / Product Development* — new products, formulations, certifications\n📣 *Sales & Marketing* — WhatsApp outreach drafts, call scripts, website articles\n🤝 *Lead Generation* — finding distributors, retailers, FPOs\n🌿 *Crop Doctor* — send a photo of a sick plant for diagnosis and Urvar product recommendations\n\n📊 Weekly business briefings are sent every *Monday at 9:00 AM IST*.\n\nJust ask me anything — or send a crop photo!`,
       { parse_mode: 'Markdown' },
     );
   });
@@ -77,7 +81,7 @@ export function createBot(): TelegramBot {
   bot.onText(/\/help/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
-      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: write Amazon listings, Instagram captions, WhatsApp messages, email campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India — found leads are saved to a pipeline, view with /leads\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /leads /teach /pending /kbstats`,
+      `*Urvar AI Assistant — Available Specialists*\n\n📈 *Market Research*\nask about: market size, trends, pricing, seasonal demand, distribution channels\n\n🔍 *Competitive Analysis*\nask about: Iffco, Coromandel, Biowin, competitor pricing, SWOT analysis\n\n🧪 *R&D / Product Development*\nask about: new formulations, NPOP certification, FCO compliance, packaging ideas\n\n📣 *Sales & Marketing*\nask to: draft WhatsApp outreach, call scripts, dealer pitches (/pitch <id>), website SEO articles (/article), campaigns\n\n🤝 *Lead Generation*\nask to: find distributors, retailers, FPOs, B2B leads across India — found leads are saved to a pipeline, view with /leads, fill in missing contact details with /enrich, get a prioritized calling list with /callsheet\n\n🌿 *Crop Doctor*\nsend a photo of a sick plant or describe symptoms — get a diagnosis and Urvar product treatment plan\n\nCommands: /start /help /clear /report /leads /enrich /callsheet /pitch /article /teach /pending /kbstats`,
       { parse_mode: 'Markdown' },
     );
   });
@@ -136,16 +140,103 @@ export function createBot(): TelegramBot {
       }
       const lines = leads.map((l) => {
         const contact = l.contact ? `\n   ${l.contact}` : '';
-        return `#${l.id} [${l.status}] ${l.name} — ${l.type}, ${l.location}${contact}`;
+        const flag = hasPhoneNumber(l.contact ?? '') ? '' : '\n   📵 no phone yet';
+        return `#${l.id} [${l.status}] ${l.name} — ${l.type}, ${l.location}${contact}${flag}`;
       });
-      const header = `🤝 Lead pipeline (${leads.length}${status ? ` ${status}` : ''}):\n\n`;
-      const footer = `\n\nUpdate: /leads <id> <${LEAD_STATUSES.join('|')}>`;
+      const missingCount = leads.filter((l) => !hasPhoneNumber(l.contact ?? '')).length;
+      const header = `🤝 Lead pipeline (${leads.length}${status ? ` ${status}` : ''})\n${formatFunnel(leadFunnelCounts())}\n\n`;
+      const enrichHint = missingCount > 0 ? `\n${missingCount} lead(s) missing a phone number — run /enrich to hunt them down.` : '';
+      const footer = `\n\nUpdate: /leads <id> <${LEAD_STATUSES.join('|')}>${enrichHint}`;
       // Plain text — lead names/contacts routinely break Markdown parsing.
       for (const chunk of splitMessage(header + lines.join('\n\n') + footer)) {
         await bot.sendMessage(msg.chat.id, chunk);
       }
     } catch (err) {
       console.error(`[bot] /leads error for chat ${msg.chat.id}:`, err);
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
+  // /enrich — send the lead agent hunting for contact details of active
+  // pipeline leads that were saved without any (max 8 per run to stay within
+  // the agent's iteration budget). Results are written back via update_lead.
+  bot.onText(/^\/enrich$/, async (msg) => {
+    try {
+      const missing = listLeadsMissingContact();
+      if (missing.length === 0) {
+        await bot.sendMessage(msg.chat.id, '✅ All active pipeline leads already have a phone number.');
+        return;
+      }
+      await bot.sendMessage(
+        msg.chat.id,
+        `🔎 Hunting phone numbers for ${missing.length} lead(s)… this may take a few minutes.`,
+      );
+      const result = await leadGenerationAgent.run(buildEnrichmentPrompt(missing), []);
+      for (const chunk of splitMessage(result.response)) {
+        await sendMarkdownSafe(bot, msg.chat.id, chunk);
+      }
+    } catch (err) {
+      console.error(`[bot] /enrich error for chat ${msg.chat.id}:`, err);
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
+  // /pitch <id> — ready-to-send WhatsApp intro + call opener for one pipeline
+  // lead, drafted by the sales agent grounded in the actual lead row.
+  bot.onText(/^\/pitch(?:\s+#?(\d+))?$/, async (msg, match) => {
+    const idArg = match?.[1];
+    try {
+      if (!idArg) {
+        await bot.sendMessage(msg.chat.id, 'Usage: /pitch <lead id> — see ids in /leads');
+        return;
+      }
+      const lead = getLead(Number(idArg));
+      if (!lead) {
+        await bot.sendMessage(msg.chat.id, `⚠️ No lead with id ${idArg}. See /leads.`);
+        return;
+      }
+      await bot.sendMessage(msg.chat.id, `✍️ Drafting outreach for #${lead.id} ${lead.name}…`);
+      const result = await salesMarketingAgent.run(buildPitchPrompt(lead), []);
+      for (const chunk of splitMessage(result.response)) {
+        await sendMarkdownSafe(bot, msg.chat.id, chunk);
+      }
+    } catch (err) {
+      console.error(`[bot] /pitch error for chat ${msg.chat.id}:`, err);
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
+  // /callsheet — on-demand version of the scheduled call sheet: top phone-ready
+  // leads with a pitch line each (enriches missing numbers first if short).
+  bot.onText(/^\/callsheet$/, async (msg) => {
+    try {
+      await bot.sendMessage(msg.chat.id, '📞 Building your call sheet… this may take a few minutes.');
+      await sendCallSheet(bot, msg.chat.id);
+    } catch (err) {
+      console.error(`[bot] /callsheet error for chat ${msg.chat.id}:`, err);
+      await bot.sendMessage(msg.chat.id, getUserFacingError(err));
+    }
+  });
+
+  // /article [topic] — website SEO article draft; no topic = the agent picks a
+  // seasonally relevant one (same prompt as the weekly content cron).
+  bot.onText(/^\/article(?:\s+([\s\S]+))?$/, async (msg, match) => {
+    const topic = match?.[1]?.trim();
+    try {
+      await bot.sendMessage(msg.chat.id, '📝 Drafting the article… this may take a few minutes.');
+      if (topic) {
+        const result = await salesMarketingAgent.run(
+          `Write an SEO article for the Urvar Natural website on: ${topic}. Deliver: a search-friendly headline, the full 600-900 word article with skimmable subheadings, one Urvar product woven in with a clear call-to-action, and a 150-character meta description at the end.`,
+          [],
+        );
+        for (const chunk of splitMessage(result.response)) {
+          await sendMarkdownSafe(bot, msg.chat.id, chunk);
+        }
+      } else {
+        await sendContentDraft(bot, msg.chat.id);
+      }
+    } catch (err) {
+      console.error(`[bot] /article error for chat ${msg.chat.id}:`, err);
       await bot.sendMessage(msg.chat.id, getUserFacingError(err));
     }
   });

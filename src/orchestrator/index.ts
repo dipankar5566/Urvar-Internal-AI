@@ -78,7 +78,12 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; agent: AgentType }> = [
   { pattern: /packaging\s+(innovation|redesign|improvement|idea)/i, agent: 'rd_product_development' },
   { pattern: /should\s+we\s+(develop|launch|create|make)\s+a\s+new/i, agent: 'rd_product_development' },
 
-  { pattern: /\b(write|create|draft|generate|compose)\s+(a\s+)?(post|caption|email|listing|description|content|copy|message|campaign)/i, agent: 'sales_marketing' },
+  { pattern: /\b(write|create|draft|generate|compose)\s+(a\s+|an\s+)?(post|caption|email|listing|description|content|copy|message|campaign|pitch|script|article|blog)/i, agent: 'sales_marketing' },
+  // B2B outreach copy: pitches, call scripts, WhatsApp drafts for pipeline leads.
+  { pattern: /\b(pitch|call\s+script|cold\s+call|opening\s+line)\b.*\b(lead|dealer|distributor|retailer|nursery|fpo|#?\d+)\b/i, agent: 'sales_marketing' },
+  { pattern: /\b(whatsapp|follow[\s-]?up)\s+(draft|intro|message)\b/i, agent: 'sales_marketing' },
+  // Website SEO content: blog posts, crop-guide articles, meta descriptions.
+  { pattern: /\b(blog|article|seo)\s+(post|content|article|idea|draft|title|topic)?\b/i, agent: 'sales_marketing' },
   { pattern: /amazon\s+(listing|product\s+title|bullet\s+point|description|keyword)/i, agent: 'sales_marketing' },
   { pattern: /(instagram|whatsapp|facebook)\s+(post|caption|message|content)/i, agent: 'sales_marketing' },
   { pattern: /marketing\s+(campaign|strategy|content|material)/i, agent: 'sales_marketing' },
@@ -133,7 +138,7 @@ Categories:
 - market_research: market trends, demand, pricing strategy, distribution channels, consumer segments, seasonal patterns, e-commerce
 - competitive_analysis: competitors, competitive positioning, SWOT, brand comparison, market share
 - rd_product_development: new product development, formulations, certifications, R&D, packaging innovation
-- sales_marketing: content creation, Amazon listings, social media posts, WhatsApp messages, campaigns, marketing copy
+- sales_marketing: sales content creation — WhatsApp outreach drafts, call scripts, dealer/distributor pitches for pipeline leads, website blog/SEO articles, campaigns, listings, marketing copy
 - lead_generation: finding distributors, retailers, FPOs, B2B leads, outreach messages
 - crop_doctor: crop disease diagnosis, pest identification, nutrient deficiency, plant health, treatment advice
 - product_info: factual questions about Urvar's OWN products or company — pack sizes, pricing, dosage, application, composition/nutrients, which product to use, certifications, company facts

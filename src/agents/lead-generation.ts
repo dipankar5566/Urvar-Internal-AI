@@ -1,6 +1,12 @@
 import { BaseAgent } from './base.js';
 import { webSearchToolDefinition, runWebSearchTool } from '../tools/web-search.js';
-import { saveLead, saveLeadToolDefinition, knownLeadsContext } from '../leads/index.js';
+import {
+  saveLead,
+  saveLeadToolDefinition,
+  updateLeadContact,
+  updateLeadToolDefinition,
+  knownLeadsContext,
+} from '../leads/index.js';
 
 const SYSTEM_BLOCKS = [
   {
@@ -15,14 +21,23 @@ Your responsibilities:
 
 Search technique: use the web_search tool's include_domains parameter to target business directories directly (e.g. ["indiamart.com"], ["justdial.com"], ["tradeindia.com"]) — directory pages carry the contact details. Run broader searches without include_domains for FPO portals and local news.
 
+CONTACT DETAILS ARE THE PRIORITY. The sales team works leads by phone call, WhatsApp, and in-person visits — a lead without a phone number is not actionable, and a street address/locality makes field visits possible. Therefore:
+- Prefer sources that carry phone numbers (JustDial and IndiaMART listings almost always do) over news articles or bare mentions.
+- Before writing your final answer, if promising leads are missing phone numbers, spend ONE extra search round on them: batch targeted queries like "<business name> <location> phone contact". Do not spend more than that — breadth still matters.
+- Put everything you find (phone, WhatsApp, email, website, street address) in the contact field when saving.
+
 For each lead, provide:
 1. Name of business/organization
 2. Type (retailer / distributor / FPO / nursery / etc.)
-3. Location (city, state)
-4. Contact info if findable (phone, email, website)
+3. Location (city, state — plus street address/locality if found)
+4. Contact info: phone first, then email/website
 5. Why they're a good fit for Urvar
 
-Pipeline: call the save_lead tool once for every qualified lead you present, so it enters the persistent pipeline. If your context includes a "Leads already in the pipeline" list, do NOT re-list those businesses as new leads — find new ones (you may reference pipeline leads if the user asks about them).
+Present leads in two tiers:
+- "✅ Ready to contact" — leads with a phone number. This is the main list.
+- "🔎 Needs contact research" — good-fit leads where no phone was found. Keep these brief (name, type, location, source, fit). Mention that /enrich will hunt their contact details later.
+
+Pipeline: call the save_lead tool once for every qualified lead you present — including the no-phone tier (they enter the pipeline and get enriched later). If your context includes a "Leads already in the pipeline" list, do NOT re-list those businesses as new leads — find new ones (you may reference pipeline leads if the user asks about them).
 
 After listing leads, provide templated outreach messages tailored to each prospect type:
 - **For retailers/dealers**: Focus on margin opportunity, fast-moving organic category, co-op marketing support
@@ -39,7 +54,9 @@ Grounding: every lead must come from web search results — never fabricate busi
 
 export class LeadGenerationAgent extends BaseAgent {
   constructor() {
-    super(SYSTEM_BLOCKS, [webSearchToolDefinition, saveLeadToolDefinition], { temperature: 0.3 });
+    super(SYSTEM_BLOCKS, [webSearchToolDefinition, saveLeadToolDefinition, updateLeadToolDefinition], {
+      temperature: 0.3,
+    });
   }
 
   protected override extraContext(): string {
@@ -73,6 +90,17 @@ export class LeadGenerationAgent extends BaseAgent {
         ? `Lead saved to pipeline (id ${result.id}).`
         : `Duplicate — already in pipeline as lead ${result.existingId} (status: ${result.existingStatus}). Do not present it as a new lead.`;
     }
+    if (name === 'update_lead') {
+      const id = Number(input['id']);
+      const contact = input['contact'] ? String(input['contact']).trim() : '';
+      if (!Number.isInteger(id) || id <= 0 || !contact) {
+        return 'Lead not updated — a valid lead id and non-empty contact are required.';
+      }
+      const ok = updateLeadContact(id, contact, input['source_url'] ? String(input['source_url']) : undefined);
+      return ok ? `Lead ${id} updated with contact details.` : `No lead with id ${id} — nothing updated.`;
+    }
     return `Unknown tool: ${name}`;
   }
 }
+
+export const leadGenerationAgent = new LeadGenerationAgent();

@@ -3,8 +3,11 @@ import TelegramBot from 'node-telegram-bot-api';
 import { MarketResearchAgent } from '../agents/market-research.js';
 import { CompetitiveAnalysisAgent } from '../agents/competitive-analysis.js';
 import { LeadGenerationAgent } from '../agents/lead-generation.js';
+import { salesMarketingAgent } from '../agents/sales-marketing.js';
 import { appendHistory, getHistory } from '../db/index.js';
 import { splitMessage, sendMarkdownSafe } from '../utils/message.js';
+import { listCallReadyLeads, listLeadsMissingContact, leadFunnelCounts, countLeadsAddedThisWeek } from '../leads/index.js';
+import { buildCallSheetPrompt, buildEnrichmentPrompt, formatFunnel } from '../leads/util.js';
 import { config } from '../config.js';
 
 const marketAgent = new MarketResearchAgent();
@@ -90,7 +93,76 @@ export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.Cha
 
   await sendSection(bot, chatId, `*📈 Market Intelligence*\n\n${sectionText(marketResult, 'Market intelligence')}`);
   await sendSection(bot, chatId, `*🔍 Competitive Intelligence*\n\n${sectionText(competitiveResult, 'Competitive intelligence')}`);
-  await sendSection(bot, chatId, `*🤝 New Leads This Week*\n\n${sectionText(leadsResult, 'Lead generation')}`);
+  const funnel = `${formatFunnel(leadFunnelCounts())}  (+${countLeadsAddedThisWeek()} added this week)`;
+  await sendSection(bot, chatId, `*🤝 New Leads This Week*\n${funnel}\n\n${sectionText(leadsResult, 'Lead generation')}`);
+}
+
+// ---------------------------------------------------------------------------
+// Call sheet: the weekly bridge from "leads in the pipeline" to "calls made".
+// Enriches missing phone numbers first (when the sheet would otherwise run
+// short), then has the sales agent turn the top leads into a phone-in-hand
+// briefing with a pitch line per lead.
+
+const CALL_SHEET_SIZE = 5;
+
+export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
+  let ready = listCallReadyLeads(CALL_SHEET_SIZE);
+
+  // Not enough phone-ready leads? Spend one enrichment round hunting numbers
+  // before building the sheet (same flow as /enrich, off the interactive path).
+  if (ready.length < CALL_SHEET_SIZE) {
+    const missing = listLeadsMissingContact();
+    if (missing.length > 0) {
+      console.log(`[scheduler] Call sheet: enriching ${missing.length} lead(s) missing a phone first…`);
+      try {
+        await withTimeout(
+          leadAgent.run(buildEnrichmentPrompt(missing), []),
+          config.reportAgentTimeoutMs,
+          'Call-sheet enrichment',
+        );
+        ready = listCallReadyLeads(CALL_SHEET_SIZE);
+      } catch (err) {
+        console.error('[scheduler] Call-sheet enrichment failed (continuing with what we have):', err);
+      }
+    }
+  }
+
+  if (ready.length === 0) {
+    await bot.sendMessage(
+      chatId,
+      '📞 Call sheet: no phone-ready leads in the pipeline. Ask me to find leads, or run /enrich to hunt numbers for the ones already saved.',
+    );
+    return;
+  }
+
+  const result = await withTimeout(
+    salesMarketingAgent.run(buildCallSheetPrompt(ready), []),
+    config.reportAgentTimeoutMs,
+    'Call sheet',
+  );
+
+  // Deterministic footer: the exact status commands, so updating the pipeline
+  // after each call is copy-paste instead of recall.
+  const statusLines = ready.map((l) => `/leads ${l.id} contacted`).join('\n');
+  const text = `📞 *Call sheet — ${ready.length} lead(s) to work today*\n\n${result.response}\n\nAfter each call, update the pipeline (tap to copy):\n${statusLines}`;
+  await sendSection(bot, chatId, text);
+}
+
+// ---------------------------------------------------------------------------
+// Content draft: one website SEO article per week, seasonally chosen by the
+// agent (it knows today's date from the dynamic system block) and grounded in
+// the RAG knowledge docs.
+
+const CONTENT_QUERY =
+  'Write this week\'s SEO article for the Urvar Natural website. Pick ONE seasonally relevant topic for Indian gardeners or farmers right now (check the current date; think monsoon/kharif/rabi timing, current planting and disease pressure) that naturally leads to an Urvar product. Deliver: a search-friendly headline, the full 600-900 word article with skimmable subheadings, one Urvar product woven in with a clear call-to-action, and a 150-character meta description at the end. Use web search only if you need to verify something seasonal or current.';
+
+export async function sendContentDraft(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
+  const result = await withTimeout(
+    salesMarketingAgent.run(CONTENT_QUERY, []),
+    config.reportAgentTimeoutMs,
+    'Content draft',
+  );
+  await sendSection(bot, chatId, `📝 *Weekly website article draft*\n\n${result.response}`);
 }
 
 export function startScheduler(bot: TelegramBot): void {
@@ -115,4 +187,25 @@ export function startScheduler(bot: TelegramBot): void {
   );
 
   console.log('[scheduler] Weekly report scheduled — every Monday 09:00 IST.');
+
+  // Sales cadence — both go to the owner directly (the founder works the
+  // leads), unlike the report which goes to the group.
+  const toOwner = (label: string, send: (bot: TelegramBot, chatId: TelegramBot.ChatId) => Promise<void>) =>
+    async (): Promise<void> => {
+      if (!config.ownerTelegramId) {
+        console.log(`[scheduler] OWNER_TELEGRAM_ID not configured — skipping ${label}.`);
+        return;
+      }
+      console.log(`[scheduler] Sending ${label}…`);
+      try {
+        await send(bot, config.ownerTelegramId);
+        console.log(`[scheduler] ${label} sent.`);
+      } catch (err) {
+        console.error(`[scheduler] Failed to send ${label}:`, err);
+      }
+    };
+
+  cron.schedule(config.callSheetCron, toOwner('call sheet', sendCallSheet), { timezone: 'Asia/Kolkata' });
+  cron.schedule(config.contentCron, toOwner('content draft', sendContentDraft), { timezone: 'Asia/Kolkata' });
+  console.log(`[scheduler] Call sheet scheduled — cron "${config.callSheetCron}" IST; content draft — cron "${config.contentCron}" IST.`);
 }

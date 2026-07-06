@@ -28,6 +28,15 @@ const cases: Array<[string, string]> = [
   // while plain pricing strategy stays with market_research
   ['what is our competitors pricing strategy?', 'competitive_analysis'],
   ['pricing strategy for our vermicompost line', 'market_research'],
+  // B2B outreach copy and website content route to sales_marketing
+  ['write a pitch for lead #12', 'sales_marketing'],
+  ['draft an article on monsoon composting', 'sales_marketing'],
+  ['call script for the Nadia distributor', 'sales_marketing'],
+  ['whatsapp draft for the nursery in Bally', 'sales_marketing'],
+  ['blog post ideas for the website', 'sales_marketing'],
+  // ...but finding NEW leads stays with lead_generation
+  ['find distributors in Punjab', 'lead_generation'],
+  ['outreach email for dealers', 'lead_generation'],
 ];
 
 for (const [message, expected] of cases) {
