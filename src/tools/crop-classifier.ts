@@ -28,7 +28,11 @@ export type CropClassification = ClassifierResult | ClassifierUnavailable;
 let modelCache: any = null;
 let labelsCache: string[] | null = null;
 let tfjsAvailable: boolean | null = null;
-let modelLoadAttempted = false;
+// Memoized as a promise, not a boolean: an album's images are classified in
+// parallel, and with a boolean guard the 2nd+ callers saw "load attempted,
+// cache still null" while the 1st caller's load was in flight — silently
+// losing classification for every image but the first after a cold start.
+let modelLoadPromise: Promise<boolean> | null = null;
 
 async function isTfjsAvailable(): Promise<boolean> {
   if (tfjsAvailable !== null) return tfjsAvailable;
@@ -41,10 +45,7 @@ async function isTfjsAvailable(): Promise<boolean> {
   return tfjsAvailable;
 }
 
-async function loadModel(): Promise<boolean> {
-  if (modelLoadAttempted) return modelCache !== null;
-  modelLoadAttempted = true;
-
+async function doLoadModel(): Promise<boolean> {
   if (!existsSync(MODEL_PATH) || !existsSync(LABELS_PATH)) return false;
   if (!(await isTfjsAvailable())) return false;
 
@@ -58,6 +59,11 @@ async function loadModel(): Promise<boolean> {
     modelCache = null;
     return false;
   }
+}
+
+function loadModel(): Promise<boolean> {
+  modelLoadPromise ??= doLoadModel();
+  return modelLoadPromise;
 }
 
 export async function classifyCropImage(imageBase64: string): Promise<CropClassification> {
