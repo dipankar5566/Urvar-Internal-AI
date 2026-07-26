@@ -588,8 +588,51 @@ export function createBot(): TelegramBot {
     }
   });
 
+  // Self-healing polling. node-telegram-bot-api can stop its internal polling
+  // loop after a fatal network error (EFATAL: ENOTFOUND/ECONNRESET/ETIMEDOUT —
+  // e.g. a transient DNS/connectivity drop) and never resume, leaving the
+  // process alive but deaf (Telegram's getUpdates is never called again). Detect
+  // those and restart polling with exponential backoff.
+  const POLLING_BACKOFF_MIN_MS = 5_000;
+  const POLLING_BACKOFF_MAX_MS = 300_000;
+  let pollingRestartTimer: NodeJS.Timeout | null = null;
+  let pollingBackoffMs = 0;
+
+  function schedulePollingRestart(): void {
+    if (pollingRestartTimer) return; // a restart is already pending
+    pollingBackoffMs = pollingBackoffMs
+      ? Math.min(pollingBackoffMs * 2, POLLING_BACKOFF_MAX_MS)
+      : POLLING_BACKOFF_MIN_MS;
+    const delay = pollingBackoffMs;
+    console.error(`[bot] Fatal polling error — restarting polling in ${Math.round(delay / 1000)}s…`);
+    pollingRestartTimer = setTimeout(async () => {
+      pollingRestartTimer = null;
+      try {
+        await bot.stopPolling({ cancel: true });
+        await bot.startPolling({ restart: true });
+        console.log('[bot] Polling restarted.');
+      } catch (restartErr) {
+        console.error(
+          '[bot] Polling restart failed:',
+          restartErr instanceof Error ? restartErr.message : restartErr,
+        );
+        schedulePollingRestart(); // keep retrying with escalating backoff
+      }
+    }, delay);
+  }
+
   bot.on('polling_error', (err) => {
     console.error('[bot] Polling error:', err.message);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EFATAL' || /EFATAL/.test(err.message)) {
+      schedulePollingRestart();
+    }
+  });
+
+  // Any received update means polling has recovered — reset the backoff so the
+  // next incident starts fresh from the minimum delay.
+  bot.on('message', () => {
+    pollingBackoffMs = 0;
   });
 
   return bot;
