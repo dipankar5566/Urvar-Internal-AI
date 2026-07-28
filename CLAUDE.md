@@ -14,10 +14,12 @@ Multi-agent Telegram bot for **Urvar Natural Pvt. Ltd.**, an Indian organic bio-
 ```bash
 cp .env.example .env        # fill in all required vars
 npm install
-npm run dev                  # dev with hot reload (tsx watch)
-npm run build && npm start   # production
+npm run dev                  # dev with hot reload (tsx watch) — Telegram bot + web API
+npm run build && npm start   # production (builds src/ AND web/)
 pm2 start ecosystem.config.cjs  # production via PM2
 ```
+
+The lightweight web UI (chat + admin dashboard) has its own `package.json` under `web/` — run `cd web && npm install` once as well. `npm run dev:web` (root) starts its Vite dev server separately; see the Web UI section below.
 
 ---
 
@@ -60,6 +62,16 @@ src/
     message.ts           # splitMessage(), formatUptime(), sendMarkdownSafe()
   types/
     optional-deps.d.ts   # Ambient declarations for sharp and @tensorflow/tfjs-node (typed as any)
+  web/
+    server.ts            # startWebServer(bot) — Express app (each router mounted at its own prefix), static serving of web/dist, request logging, /api/health, graceful skip if unconfigured
+    auth.ts               # Shared-password login (owner/member), stateless HMAC-signed session cookie, requireAuth()/requireOwner()
+    rate-limit.ts          # LoginRateLimiter — pure in-memory lockout for /api/auth/login, no Express dependency
+    routes/
+      chat.ts             # POST /api/chat, /api/chat/image (up to 3 photos), GET /api/chat/history, GET/DELETE /api/chat/sessions — mirrors bot/telegram.ts's message/photo handlers
+      leads.ts            # GET/POST/PATCH /api/leads (search/pagination/create/detail/status/contact), POST /:id/pitch, POST /enrich
+      kb.ts               # GET/POST/PATCH /api/kb (general browse+search+pagination, plus /pending/:id/approve/:id/reject) — owner-only
+      reports.ts          # GET /api/reports/* (archived weekly report, kbstats, call-ready leads) + POST .../generate (on-demand call sheet / article drafting)
+web/                      # Separate React + Vite SPA (own package.json/node_modules) — Notion-derived design system, sidebar shell, chat/leads/reports/kb pages
 RAG/
   docs/                  # 8 markdown knowledge files: company.md, products.md, pricing.md,
                          # customers.md, competitors.md, urvar-summary.md, crop-guide.md, disease-guide.md
@@ -162,6 +174,25 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - History retrieval controlled by `config.historyTurns`; `getHistory(sessionId, turns?)` accepts an optional per-call override (the scheduler passes `1` for report deltas).
 - Rows come back newest-first from DB; `getHistory()` reverses to chronological order.
 
+### Web UI
+
+- **Purpose:** a browser chat + admin dashboard (leads pipeline, KB approval queue, reports, on-demand drafting) so the sales team doesn't need to be in the bot's Telegram chat, and the owner can review KB facts in a browser. **LAN-only for now** — no HTTPS/reverse proxy, no per-user accounts (both deliberate scope calls, not oversights).
+- **Auth is two shared passwords, not accounts.** `WEB_OWNER_PASSWORD` and `WEB_TEAM_PASSWORD` map to roles `'owner' | 'member'` (`src/web/auth.ts`). Sessions are a **stateless HMAC-signed cookie** (`WEB_SESSION_SECRET`, 7-day TTL) — no session table. `requireAuth()` gates any logged-in user; `requireOwner()` (used for `/api/kb/*` and `GET /api/reports/kbstats`) mirrors the Telegram `isOwner()` gate.
+- **Login is rate-limited.** `src/web/rate-limit.ts`'s `LoginRateLimiter` (pure, injectable clock, no Express dependency) locks a key out after every 5 consecutive failures, doubling the lockout (30s → capped at 15min) each time it relocks; `recordSuccess` clears it. Wired into `login()` keyed on `req.ip` — necessary because a short shared password has no other brute-force defense.
+- **Each route file is mounted at its own specific prefix** in `src/web/server.ts` (`/api/chat`, `/api/leads`, `/api/kb`, `/api/reports` — not a shared `/api`), with routes defined relative to that prefix (`/`, `/:id`, …). This is load-bearing, not stylistic: a router's `router.use(requireOwner())` runs for *every* request that reaches that router, and if two routers shared a mount prefix, one router's auth middleware could terminate (401/403) a request actually meant for a sibling router registered after it, before Express ever checked whether a matching route existed. (Caught in testing: `member` requests to `/api/reports/*` were being swallowed by the KB router's `requireOwner()` when both were mounted at `/api`.)
+- **`startWebServer(bot)` needs the live Telegram `bot` instance**, not just a fresh Express app — the chat route (`src/web/routes/chat.ts`) calls `distillConversationToKb(bot, sessionId, conversationText)` every 3 turns, same as `bot/telegram.ts`, so the shared KB (see Learned Knowledge above) doesn't have a blind spot for web-originated conversations. In `src/index.ts`, `createBot()` must run before `startWebServer(bot)`.
+- **Chat sessions are prefixed `web:<uuid>`** (`src/db/index.ts`'s `conversation_history.session_id` is just `TEXT`, so this is a plain convention, not a schema change) so they can never collide with Telegram's numeric chat ids or the `report:*` synthetic sessions. `GET /api/chat/history` and the `listSessionsByPrefix()`-backed `GET /api/chat/sessions` (sidebar conversation switcher, most-recent-first with a first-message preview via a `ROW_NUMBER()` window query) both refuse/scope to `web:` ids, so the dashboard can't read Telegram chat histories or the archived weekly-report sessions. `DELETE /api/chat/sessions/:id` wraps `clearHistory`. Up to 3 images per diagnosis (`MAX_IMAGES`, matches Telegram's `MAX_PHOTOS_PER_DIAGNOSIS`).
+- **Leads and KB have general query functions** (`queryLeads()` in `src/leads/index.ts`, `queryLearned()` in `src/rag/learned.ts`) built alongside the existing `listLeads()`/`listPending()` rather than widening their positional params — the WHERE clause is genuinely dynamic (status/category/source/search, all optional), built as a string but with every value bound as a parameter, never interpolated. Powers the dashboard's search/filter/pagination; `listLeads()`/`listPending()` are untouched, so no existing caller (Telegram, scheduler) is affected.
+- **On-demand drafting reuses the cron's own logic.** `sendCallSheet()`/`sendContentDraft()` in `src/scheduler/index.ts` are split into a compute-and-draft half (`draftCallSheet()`, `draftContentArticle(topic?)` — no Telegram send, returns the LLM's text) and a thin Telegram-formatting wrapper around it. `POST /api/reports/callsheet/generate` and `/api/reports/article/generate` call the draft functions directly; the Monday/Wednesday cron behavior is byte-for-byte unchanged. `bot/telegram.ts`'s `/article <topic>` handler also now calls `draftContentArticle(topic)` instead of duplicating the prompt inline.
+- **Reports also serve archived data with no LLM call for the always-visible sections.** `GET /api/reports/weekly` reads the same synthetic sessions (`report:market_research`, `report:competitive_analysis`) the Monday cron archives to (invariant #7) via `getHistory(sessionId, 1)`, instead of re-running the analytical agents on every dashboard load; `listCallReadyLeads()`/`getKbStats()`/`findDuplicateClusters()` are likewise cheap reads. Only the explicit "Generate call sheet"/"Generate article" actions trigger a real agent run.
+- **Startup must degrade, not crash.** If `WEB_ENABLED=false`, or any of `WEB_OWNER_PASSWORD`/`WEB_TEAM_PASSWORD`/`WEB_SESSION_SECRET` is unset, `startWebServer()` logs a `[web]` warning and returns without starting a server — it must never take the Telegram bot down. The `app.listen()` return value's `'error'` event (e.g. `EADDRINUSE`) is also caught for the same reason (an unhandled `'error'` event on an `http.Server` throws otherwise).
+- **Request logging.** A `[web]` request-log middleware in `server.ts` logs method/path/status/duration for every `/api/*` request (skips static asset/SPA-fallback hits).
+- **`GET /api/health`** (any authenticated role) returns `{uptimeMs, version}` — `version` is read from `package.json` at startup, `uptimeMs` from a module-level start timestamp. Shown in the sidebar footer.
+- **Frontend build lives outside `src/`.** `web/` is a separate Vite + React + TypeScript app with its own `package.json`/`node_modules` (not an npm workspace) — `npm run build` (root) runs `tsc && npm run build:web`, which builds `web/dist`. `src/web/server.ts` serves it via `express.static` + an SPA fallback route; if `web/dist` doesn't exist (frontend never built), the API still comes up, just without the static UI. `npm run dev:web` runs the Vite dev server, which proxies `/api` to `WEB_PORT` so cookies stay same-origin without needing CORS.
+- **Design system (`web/src/index.css`)** is derived from Notion's own published palette (`#37352F` text, `#787774` secondary, warm off-white ground) with Urvar's organic green as the accent instead of a generic blue, and a left sidebar layout (Notion's structural signature) instead of top tabs. Semantic status colors (lead/KB status pills) are a distinct hue family from the accent. Everything is CSS custom properties on `:root`, redefined under `@media (prefers-color-scheme: dark)` and `:root[data-theme]` so both the OS preference and an in-app toggle work.
+- **Chat markdown rendering is hand-rolled** (`web/src/lib/markdown-lite.tsx`) — emits React nodes directly (bold/italic/code/links/lists/headings), never `dangerouslySetInnerHTML` or an HTML string, so there is no HTML-injection surface regardless of model output; link hrefs are checked against `^https?://` before being rendered as `<a>`, otherwise shown as plain text (blocks `javascript:` URI clicks).
+- **Tier-1 tests exist for this module** (`tests/unit/rate-limit.test.ts`, `tests/unit/web-routes.test.ts`) covering everything that doesn't call a real LLM/embedding API — auth (login/logout/me/role-gating), leads CRUD, KB browse+reject, reports read paths. KB approve, chat, and the on-demand generate endpoints are excluded (they call Anthropic/Voyage). **`tests/setup.ts` force-overrides `SQLITE_DB_PATH` to a fresh temp file for the whole test run** (not `??=` — unlike the API-key placeholders, this must win even over a real `.env` value), so these route tests can never touch the real database.
+
 ### Config
 
 - All new env vars must be added to `src/config.ts`.
@@ -227,8 +258,10 @@ Use `console.log` / `console.error` only — no external logger. Prefix format:
 ## Common Commands
 
 ```bash
-npm run dev        # tsx watch src/index.ts — hot reload
-npm run build      # tsc — compiles to dist/
+npm run dev        # tsx watch src/index.ts — hot reload (Telegram bot + web API)
+npm run dev:web    # Vite dev server for web/ (proxies /api to WEB_PORT) — run alongside npm run dev
+npm run build      # tsc && npm run build:web — compiles to dist/ and web/dist
+npm run build:web  # cd web && npm run build — frontend only
 npm start          # node dist/index.js
 npm run typecheck  # tsc --noEmit — type check only (src/)
 npm run typecheck:test           # tsc -p tsconfig.test.json — type check src/ + tests/
@@ -267,10 +300,10 @@ The production Mac is configured so `urvar-bot` restarts automatically. This is 
 
 Two-tier suite under `tests/`, using Node's built-in `node:test` + `node:assert` run through `tsx` — **no new dependencies** (mirrors the `node:sqlite` "use built-ins" ethos).
 
-- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor and `learnedCategory` filtering), `cosineSimilarity`, `formatSearchResponse` (incl. raw-content truncation), `buildRetrievalQuery`, `currentDateLine`, `routeByKeyword`, `isRetryable`, `normalizeLeadKey`/`isLeadStatus`, `categoryForSource`, `sendMarkdownSafe` (fake bot). This is the regression backbone — run it before every commit.
+- **`npm test`** — Tier 1 deterministic unit tests (`tests/unit/`). **No API keys, no cost, no network.** Covers the pure logic: `splitMessage`/`formatUptime`, `chunkMarkdown`, `hashDocs`/`search` (incl. the `minScore` floor and `learnedCategory` filtering), `cosineSimilarity`, `formatSearchResponse` (incl. raw-content truncation), `buildRetrievalQuery`, `currentDateLine`, `routeByKeyword`, `isRetryable`, `normalizeLeadKey`/`isLeadStatus`, `categoryForSource`, `sendMarkdownSafe` (fake bot), `LoginRateLimiter` (`rate-limit.test.ts`), and route-level coverage for the web dashboard's non-LLM endpoints (`web-routes.test.ts`: auth, leads CRUD, KB browse/reject, reports read paths — spins up a real Express app + `node:sqlite` against an isolated temp DB, asserting over real HTTP via `fetch`). This is the regression backbone — run it before every commit.
 - **`npm run test:integration`** — Tier 2 live-API smoke tests (`tests/integration/`). Opt-in only (gated on `RUN_INTEGRATION`, set automatically by the script); needs a real `.env`; makes paid calls. Asserts structural invariants (routing, non-empty grounded response, RAG returns knowledge), not exact text. **Still never mocks the Anthropic SDK** — the value is live behaviour.
 - **`npm run test:eval`** — Tier 3 manual A/B runner (`tests/eval/run.ts`, no assertions). Prints responses + token/cache/iteration stats for representative prompts to compare answer quality before/after a change. Needs a real `.env`.
-- **Env preload:** `tests/setup.ts` (loaded via `--import`) runs `dotenv/config` then fills only *missing* required env vars with placeholders (`??=`). This lets unit tests import modules whose `config.ts` validates env at load time, without real keys; real keys (when a `.env` exists) are never overwritten, so integration/eval still hit live APIs.
+- **Env preload:** `tests/setup.ts` (loaded via `--import`) runs `dotenv/config` then fills only *missing* required env vars with placeholders (`??=`). This lets unit tests import modules whose `config.ts` validates env at load time, without real keys; real keys (when a `.env` exists) are never overwritten, so integration/eval still hit live APIs. **`SQLITE_DB_PATH` is the one exception — force-overridden (plain `=`, not `??=`) to a fresh `mkdtempSync` temp file for the whole run**, so any test that imports `src/db/index.ts` (directly or transitively, e.g. `src/leads/index.ts`, `src/rag/learned.ts`) can never open the real production database, even if a developer's `.env` happens to set that var.
 - **Type-checking & build:** tests live outside `rootDir: src`, so `npm run build` never emits them to `dist/`. The base `npm run typecheck` covers `src/` only; **`npm run typecheck:test`** (`tsconfig.test.json`) type-checks `src/` + `tests/` together.
 - **Two source symbols are exported solely for testing** (additive, non-breaking): `routeByKeyword` (`src/orchestrator/index.ts`) and `isRetryable` (`src/agents/base.ts`).
 - Health checks in `src/index.ts` (SQLite ping, Anthropic API ping, Tavily ping, Voyage AI ping) remain the primary startup smoke tests.
@@ -334,6 +367,13 @@ KB_DISTILL_CRON=0 8 * * *           # periodic distillation schedule (IST)
 KB_SEMANTIC_DEDUP_THRESHOLD=0.92    # cosine ceiling; approvals above it are auto-rejected as near-duplicates
 CALL_SHEET_CRON=30 8 * * 1          # prioritized calling list to the owner (IST); skipped if OWNER_TELEGRAM_ID unset
 CONTENT_CRON=0 9 * * 3              # weekly website SEO article draft to the owner (IST); skipped if OWNER_TELEGRAM_ID unset
+
+# Web UI (LAN-only, shared-password auth — see Web UI section above)
+WEB_ENABLED=true                    # false = skip starting the web server entirely
+WEB_PORT=3001
+WEB_OWNER_PASSWORD=                 # unset = web server logs a warning and doesn't start
+WEB_TEAM_PASSWORD=                  # unset = web server logs a warning and doesn't start
+WEB_SESSION_SECRET=                 # unset = web server logs a warning and doesn't start; HMAC key for session cookies
 ```
 
 ---

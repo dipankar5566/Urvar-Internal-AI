@@ -9,6 +9,7 @@ import { loadApprovedLearned } from './rag/learned.js';
 import { createBot } from './bot/telegram.js';
 import { startScheduler } from './scheduler/index.js';
 import { startLearningScheduler } from './learning/index.js';
+import { startWebServer } from './web/server.js';
 
 async function healthCheck(): Promise<void> {
   // 1. SQLite
@@ -62,6 +63,11 @@ async function main(): Promise<void> {
   const bot = createBot();
   startScheduler(bot);
   startLearningScheduler(bot);
+  try {
+    startWebServer(bot);
+  } catch (err) {
+    console.error('[web] Failed to start web UI (Telegram bot continues):', err);
+  }
 
   console.log('[startup] Bot is running. Press Ctrl+C to stop.');
 

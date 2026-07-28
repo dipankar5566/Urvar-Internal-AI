@@ -10,7 +10,7 @@ import { listLeads, updateLeadStatus, isLeadStatus, LEAD_STATUSES, listLeadsMiss
 import { buildEnrichmentPrompt, buildPitchPrompt, formatFunnel, hasPhoneNumber } from '../leads/util.js';
 import { leadGenerationAgent } from '../agents/lead-generation.js';
 import { salesMarketingAgent } from '../agents/sales-marketing.js';
-import { sendCallSheet, sendContentDraft } from '../scheduler/index.js';
+import { sendCallSheet, sendContentDraft, draftContentArticle } from '../scheduler/index.js';
 import { proposeLearned, approveLearned, rejectLearned, editLearned, getLearned, listPending, getKbStats, findDuplicateClusters } from '../rag/learned.js';
 import { proposeAndNotify, distillConversationToKb, distillAgronomyToKb, notifyOwnerOfPending } from '../learning/index.js';
 import { parseKbCallback } from '../rag/learned-util.js';
@@ -225,11 +225,8 @@ export function createBot(): TelegramBot {
     try {
       await bot.sendMessage(msg.chat.id, '📝 Drafting the article… this may take a few minutes.');
       if (topic) {
-        const result = await salesMarketingAgent.run(
-          `Write an SEO article for the Urvar Natural website on: ${topic}. Deliver: a search-friendly headline, the full 600-900 word article with skimmable subheadings, one Urvar product woven in with a clear call-to-action, and a 150-character meta description at the end.`,
-          [],
-        );
-        for (const chunk of splitMessage(result.response)) {
+        const text = await draftContentArticle(topic);
+        for (const chunk of splitMessage(text)) {
           await sendMarkdownSafe(bot, msg.chat.id, chunk);
         }
       } else {

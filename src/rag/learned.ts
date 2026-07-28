@@ -141,6 +141,59 @@ export function listPending(): LearnedRow[] {
   return stmtListPending.all() as unknown as LearnedRow[];
 }
 
+export interface LearnedQuery {
+  status?: LearnedStatus;
+  category?: KbCategory;
+  source?: LearnedSource;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface LearnedQueryResult {
+  facts: LearnedRow[];
+  total: number;
+}
+
+// Browse/search across all statuses for the dashboard's KB page — listPending
+// stays as-is for the Telegram /pending flow. Same dynamic-WHERE-with-bound-
+// params pattern as leads/index.ts's queryLeads.
+export function queryLearned(query: LearnedQuery = {}): LearnedQueryResult {
+  const { status, category, source, search, limit = 30, offset = 0 } = query;
+  const conditions: string[] = [];
+  const params: Array<string> = [];
+  if (status) {
+    conditions.push('status = ?');
+    params.push(status);
+  }
+  if (category) {
+    conditions.push('category = ?');
+    params.push(category);
+  }
+  if (source) {
+    conditions.push('source = ?');
+    params.push(source);
+  }
+  const trimmedSearch = search?.trim();
+  if (trimmedSearch) {
+    conditions.push('fact LIKE ?');
+    params.push(`%${trimmedSearch}%`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const facts = db
+    .prepare(
+      `SELECT id, fact, source, source_detail, status, category FROM learned_knowledge
+       ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, limit, offset) as unknown as LearnedRow[];
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM learned_knowledge ${where}`).get(...params) as {
+    n: number;
+  }).n;
+
+  return { facts, total };
+}
+
 export function editLearned(id: number, newText: string): void {
   stmtEdit.run(newText.trim().slice(0, 500), id);
 }

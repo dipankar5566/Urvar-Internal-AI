@@ -50,6 +50,28 @@ const stmtLastAgent = db.prepare(`
   LIMIT 1
 `);
 
+// Session list for a prefix (e.g. the web UI's 'web:' chat sessions) — most
+// recently active first, each with a preview of its first user message.
+const stmtListSessions = db.prepare(`
+  WITH sessions AS (
+    SELECT session_id, MAX(created_at) AS last_at
+    FROM conversation_history
+    WHERE session_id LIKE ?
+    GROUP BY session_id
+  ),
+  first_user AS (
+    SELECT session_id, content,
+           ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at ASC, id ASC) AS rn
+    FROM conversation_history
+    WHERE role = 'user'
+  )
+  SELECT s.session_id AS sessionId, s.last_at AS lastAt, fu.content AS preview
+  FROM sessions s
+  LEFT JOIN first_user fu ON fu.session_id = s.session_id AND fu.rn = 1
+  ORDER BY s.last_at DESC
+  LIMIT ?
+`);
+
 export interface TokenUsage {
   tokens_in: number;
   tokens_out: number;
@@ -97,4 +119,14 @@ export function clearHistory(sessionId: string): void {
 export function getLastAgentUsed(sessionId: string): string | null {
   const row = stmtLastAgent.get(sessionId) as { agent_used: string } | undefined;
   return row?.agent_used ?? null;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  lastAt: string;
+  preview: string | null;
+}
+
+export function listSessionsByPrefix(prefix: string, limit = 30): SessionSummary[] {
+  return stmtListSessions.all(`${prefix}%`, limit) as unknown as SessionSummary[];
 }

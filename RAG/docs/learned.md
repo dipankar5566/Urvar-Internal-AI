@@ -95,3 +95,61 @@ approval flow (`/teach`, or the ✏️ Edit button).
 - West Bengal soils have documented zinc deficiency; Zinc EDTA 12% is relevant for paddy at 30–35 DAS (tillering stage); low-medium priority vs. kharif basal products  _(source: periodic, category: business, approved 2026-07-06)_
 
 - Kharif basal application window for paddy and vegetables is July–August; vermicompost and FYM are critical inputs during this 4-week period  _(source: periodic, category: business, approved 2026-07-06)_
+
+- Ferrous sulphate (FeSO₄) foliar spray at 1-2 gm per litre applied in morning provides quick iron correction; neem oil spray (3-5 ml per litre + 1-2 drops dish soap) applied in evening every 7 days controls spider mites  _(source: periodic, category: business, approved 2026-07-07)_
+
+- Vermicompost naturally acidifies root zone, chelates micronutrients including iron, and suppresses mite populations; 150-200 gm recommended per pot or integrated into fresh potting mix  _(source: periodic, category: business, approved 2026-07-07)_
+
+- Humic acid liquid biostimulant chelates iron naturally and makes it available to roots even at higher soil pH; recommended at 3 ml per litre for weekly soil drench over 3 weeks for iron deficiency correction  _(source: periodic, category: business, approved 2026-07-07)_
+
+- Spider mite (Tetranychus urticae) infestation confirmed in potted jasmine in Barrackpore; thrives in hot, dry, dusty conditions with low air circulation typical of summer (June-July)  _(source: periodic, category: business, approved 2026-07-07)_
+
+- Jasminum sambac (Mogra/Arabian Jasmine) in Barrackpore shows iron deficiency caused by alkaline soil pH from hard tap water irrigation; interveinal chlorosis on new leaves with green veins indicates Fe deficiency  _(source: periodic, category: business, approved 2026-07-07)_
+
+- Humic acid biostimulant chelates iron naturally and improves availability even at higher soil pH; effective for correcting iron deficiency in potted ornamentals  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Vermicompost naturally acidifies root zone, chelates micronutrients including iron, and suppresses mite populations at soil surface in potted plants  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Rainwater or slightly acidified irrigation water prevents alkaline soil pH buildup in potted plants in hard-water regions like Barrackpore  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Spider mite (Tetranychus urticae) infestation confirmed on potted jasmine in Barrackpore; hot summer conditions (June-July) and low air circulation create ideal breeding environment; mite feeding reduces photosynthesis and worsens chlorosis  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Urvar Humic Acid Liquid Bio-Stimulant at 3 ml/L soil drench chelates iron naturally and improves availability even at higher pH; Zinc EDTA 12% at 3-5 gm in 20L addresses co-deficiency; Enriched Vermicompost 150-200 gm per pot acidifies root zone long-term  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Spider mite control on jasmine: water jet wash (removes 60-70% mites), neem oil spray (3-5 ml + dish soap per litre, evening only, repeat every 7 days), repeat water washing every 3-4 days; mite population doubles every 7-10 days in July heat  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Iron deficiency in potted jasmine corrected by: soil pH reduction (fresh acidic potting mix, rainwater irrigation, vermicompost), ferrous sulphate foliar spray (1-2 gm/L), and humic acid soil drench (3 ml/L weekly)  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Spider mite infestation (Tetranychus urticae) thrives in Barrackpore's hot, dry summer conditions (June-July) with low air circulation  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Urvar Humic Acid Liquid Bio-Stimulant at 3ml/L soil drench chelates iron and corrects micronutrient deficiency in alkaline potted soils  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Urvar Zinc EDTA 12% at 3-5gm per 20L foliar spray corrects co-existing zinc deficiency common in alkaline pot soils alongside iron deficiency  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Urvar Enriched Vermicompost at 150-200gm pot top-dress naturally acidifies root zone and suppresses mite populations through soil microbes  _(source: periodic, category: business, approved 2026-07-10)_
+
+- Domestic Indian lignite (Gujarat/Rajasthan) preferred for small-scale startup due to lower minimum order quantity, no import logistics, and lower cost than Chinese leonardite  _(source: conversation, category: business, approved 2026-07-12)_
+
+- KOH (Potassium Hydroxide) preferred extraction agent over NaOH because it produces Potassium Humate, agronomically superior to sodium humate  _(source: conversation, category: business, approved 2026-07-12)_
+
+- FCO Schedule VI registration is mandatory for Humic Acid sales; only 146 biostimulant products currently registered; provisional G3 certificates became invalid; registration requires 12-18 months including field trial bioefficacy data  _(source: conversation, category: business, approved 2026-07-12)_
+
+- Standard alkaline extraction process: 1-2% KOH solution at 60-80°C with continuous stirring for 2-3 hours yields approximately 9L humic acid per kg of raw material  _(source: conversation, category: business, approved 2026-07-12)_
+
+- 500-liter stainless steel jacketed reactors in India cost ₹1,25,000 to ₹7,50,000 depending on specifications  _(source: web_research, category: business, approved 2026-07-13)_
+
+- Humic acid extraction from leonardite using KOH yields approximately 28-32%; Na₂CO₃ extraction yields up to 66.20% with 32.67% efficiency  _(source: web_research, category: business, approved 2026-07-13)_
+
+- Humic acid biostimulants in India require Schedule VI FCO registration with efficacy, safety data, and GLP-compliant testing  _(source: web_research, category: business, approved 2026-07-13)_
+
+- NABL-accredited labs in India charge approximately ₹1,200 per sample for humic and fulvic acid testing  _(source: web_research, category: business, approved 2026-07-13)_
+
+- Humic & Fulvic Acid is listed under FCO Schedule VI Category (h); Schedule VI registration is mandatory before commercial manufacture as of June 2025  _(source: periodic, category: business, approved 2026-07-13)_
+
+- India recorded its driest June in over 12 years as of 2026, with rainfall 40% below normal  _(source: web_research, category: business, approved 2026-07-16)_
+
+- India Meteorological Department forecasted below-normal rainfall for July 2026, affecting kharif sowing  _(source: web_research, category: business, approved 2026-07-16)_
+
+- Summer crop planting area in India declined 23% compared to same period previous year as of mid-2026  _(source: web_research, category: business, approved 2026-07-16)_
+
+- Rice sowing in India was down by approximately 25% as of mid-2026 due to delayed monsoon  _(source: web_research, category: business, approved 2026-07-16)_

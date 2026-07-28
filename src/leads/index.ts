@@ -104,6 +104,49 @@ export function listLeads(status?: LeadStatus, limit = 30): LeadRow[] {
   return rows as unknown as LeadRow[];
 }
 
+export interface LeadQuery {
+  status?: LeadStatus;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface LeadQueryResult {
+  leads: LeadRow[];
+  total: number;
+}
+
+// Search/filter/paginate for the dashboard's leads browser. Built as a
+// separate function (rather than widening listLeads' positional params)
+// since the WHERE clause is genuinely dynamic; every user-supplied value
+// still goes through bound parameters, never string-interpolated into SQL.
+export function queryLeads(query: LeadQuery = {}): LeadQueryResult {
+  const { status, search, limit = 30, offset = 0 } = query;
+  const conditions: string[] = [];
+  const params: Array<string> = [];
+  if (status) {
+    conditions.push('status = ?');
+    params.push(status);
+  }
+  const trimmedSearch = search?.trim();
+  if (trimmedSearch) {
+    const like = `%${trimmedSearch}%`;
+    conditions.push('(name LIKE ? OR location LIKE ? OR type LIKE ?)');
+    params.push(like, like, like);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const rows = db
+    .prepare(
+      `SELECT id, name, type, location, contact, source_url, fit_reason, status, created_at
+       FROM leads ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, limit, offset) as unknown as LeadRow[];
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM leads ${where}`).get(...params) as { n: number }).n;
+
+  return { leads: rows, total };
+}
+
 // Returns true if the row existed and was updated.
 export function updateLeadStatus(id: number, status: LeadStatus): boolean {
   return stmtUpdateStatus.run(status, id).changes > 0;

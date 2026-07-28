@@ -40,4 +40,15 @@ export const config = {
   // above this against any existing approved fact is dropped as a near-duplicate;
   // the daily consolidation pass uses the same threshold to flag clusters.
   kbSemanticDedupThreshold: parseFloat(process.env['KB_SEMANTIC_DEDUP_THRESHOLD'] ?? '0.92'),
+
+  // Lightweight web UI (chat + admin dashboard), LAN-only for now. Two shared
+  // passwords (no per-user accounts) gate 'owner' vs 'member' access; sessions
+  // are a stateless HMAC-signed cookie. If WEB_ENABLED but any secret is unset,
+  // startWebServer() logs a warning and skips starting the server rather than
+  // throwing — the Telegram bot must keep running regardless.
+  webEnabled: (process.env['WEB_ENABLED'] ?? 'true') !== 'false',
+  webPort: parseInt(process.env['WEB_PORT'] ?? '3001', 10),
+  webOwnerPassword: process.env['WEB_OWNER_PASSWORD'] ?? '',
+  webTeamPassword: process.env['WEB_TEAM_PASSWORD'] ?? '',
+  webSessionSecret: process.env['WEB_SESSION_SECRET'] ?? '',
 } as const;

@@ -6,7 +6,7 @@ import { LeadGenerationAgent } from '../agents/lead-generation.js';
 import { salesMarketingAgent } from '../agents/sales-marketing.js';
 import { appendHistory, getHistory } from '../db/index.js';
 import { splitMessage, sendMarkdownSafe } from '../utils/message.js';
-import { listCallReadyLeads, listLeadsMissingContact, leadFunnelCounts, countLeadsAddedThisWeek } from '../leads/index.js';
+import { listCallReadyLeads, listLeadsMissingContact, leadFunnelCounts, countLeadsAddedThisWeek, type LeadRow } from '../leads/index.js';
 import { buildCallSheetPrompt, buildEnrichmentPrompt, formatFunnel } from '../leads/util.js';
 import { config } from '../config.js';
 
@@ -105,7 +105,14 @@ export async function sendWeeklyReport(bot: TelegramBot, chatId: TelegramBot.Cha
 
 const CALL_SHEET_SIZE = 5;
 
-export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
+export interface CallSheetDraft {
+  ready: LeadRow[];
+  text: string;
+}
+
+// Compute + LLM-draft only — no Telegram send. Shared by the Monday cron
+// (sendCallSheet below) and the dashboard's on-demand "Generate call sheet".
+export async function draftCallSheet(): Promise<CallSheetDraft | null> {
   let ready = listCallReadyLeads(CALL_SHEET_SIZE);
 
   // Not enough phone-ready leads? Spend one enrichment round hunting numbers
@@ -127,7 +134,19 @@ export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId
     }
   }
 
-  if (ready.length === 0) {
+  if (ready.length === 0) return null;
+
+  const result = await withTimeout(
+    salesMarketingAgent.run(buildCallSheetPrompt(ready), []),
+    config.reportAgentTimeoutMs,
+    'Call sheet',
+  );
+  return { ready, text: result.response };
+}
+
+export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
+  const draft = await draftCallSheet();
+  if (!draft) {
     await bot.sendMessage(
       chatId,
       '📞 Call sheet: no phone-ready leads in the pipeline. Ask me to find leads, or run /enrich to hunt numbers for the ones already saved.',
@@ -135,16 +154,10 @@ export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId
     return;
   }
 
-  const result = await withTimeout(
-    salesMarketingAgent.run(buildCallSheetPrompt(ready), []),
-    config.reportAgentTimeoutMs,
-    'Call sheet',
-  );
-
   // Deterministic footer: the exact status commands, so updating the pipeline
   // after each call is copy-paste instead of recall.
-  const statusLines = ready.map((l) => `/leads ${l.id} contacted`).join('\n');
-  const text = `📞 *Call sheet — ${ready.length} lead(s) to work today*\n\n${result.response}\n\nAfter each call, update the pipeline (tap to copy):\n${statusLines}`;
+  const statusLines = draft.ready.map((l) => `/leads ${l.id} contacted`).join('\n');
+  const text = `📞 *Call sheet — ${draft.ready.length} lead(s) to work today*\n\n${draft.text}\n\nAfter each call, update the pipeline (tap to copy):\n${statusLines}`;
   await sendSection(bot, chatId, text);
 }
 
@@ -156,13 +169,20 @@ export async function sendCallSheet(bot: TelegramBot, chatId: TelegramBot.ChatId
 const CONTENT_QUERY =
   'Write this week\'s SEO article for the Urvar Natural website. Pick ONE seasonally relevant topic for Indian gardeners or farmers right now (check the current date; think monsoon/kharif/rabi timing, current planting and disease pressure) that naturally leads to an Urvar product. Deliver: a search-friendly headline, the full 600-900 word article with skimmable subheadings, one Urvar product woven in with a clear call-to-action, and a 150-character meta description at the end. Use web search only if you need to verify something seasonal or current.';
 
+// Compute + LLM-draft only — no Telegram send. Shared by the Wednesday cron,
+// the /article Telegram command, and the dashboard's on-demand generator.
+// No topic = the agent picks a seasonally relevant one (CONTENT_QUERY).
+export async function draftContentArticle(topic?: string): Promise<string> {
+  const query = topic
+    ? `Write an SEO article for the Urvar Natural website on: ${topic}. Deliver: a search-friendly headline, the full 600-900 word article with skimmable subheadings, one Urvar product woven in with a clear call-to-action, and a 150-character meta description at the end.`
+    : CONTENT_QUERY;
+  const result = await withTimeout(salesMarketingAgent.run(query, []), config.reportAgentTimeoutMs, 'Content draft');
+  return result.response;
+}
+
 export async function sendContentDraft(bot: TelegramBot, chatId: TelegramBot.ChatId): Promise<void> {
-  const result = await withTimeout(
-    salesMarketingAgent.run(CONTENT_QUERY, []),
-    config.reportAgentTimeoutMs,
-    'Content draft',
-  );
-  await sendSection(bot, chatId, `📝 *Weekly website article draft*\n\n${result.response}`);
+  const text = await draftContentArticle();
+  await sendSection(bot, chatId, `📝 *Weekly website article draft*\n\n${text}`);
 }
 
 export function startScheduler(bot: TelegramBot): void {
