@@ -71,17 +71,19 @@ async function main(): Promise<void> {
 
   console.log('[startup] Bot is running. Press Ctrl+C to stop.');
 
-  process.on('SIGINT', () => {
+  const shutdown = async (): Promise<void> => {
     console.log('\n[shutdown] Stopping…');
-    bot.stopPolling();
+    await bot.stopPolling();
     db.close();
     process.exit(0);
+  };
+
+  process.on('SIGINT', () => {
+    void shutdown();
   });
 
   process.on('SIGTERM', () => {
-    bot.stopPolling();
-    db.close();
-    process.exit(0);
+    void shutdown();
   });
 }
 

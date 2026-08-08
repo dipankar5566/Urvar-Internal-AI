@@ -153,3 +153,7 @@ approval flow (`/teach`, or the ✏️ Edit button).
 - Summer crop planting area in India declined 23% compared to same period previous year as of mid-2026  _(source: web_research, category: business, approved 2026-07-16)_
 
 - Rice sowing in India was down by approximately 25% as of mid-2026 due to delayed monsoon  _(source: web_research, category: business, approved 2026-07-16)_
+
+- Central government demonstrating political will for biofertilizers at CM level across Northeast India (Manipur CSIR-NEIST Bioreactor unit inaugurated 2 July 2026); creates policy tailwind for neighboring states including West Bengal.  _(source: periodic, category: business, approved 2026-08-06)_
+
+- Credible home-garden vermicompost 5kg price band: ₹51–₹85/kg delivered (₹255–₹425 per unit); TrustBasket (₹51.3/kg) and Ugaoo (₹84.4/kg) set market anchors; recommend Urvar MRP ₹299–₹349.  _(source: periodic, category: business, approved 2026-08-06)_
