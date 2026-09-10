@@ -12,29 +12,50 @@ import { startLearningScheduler } from './learning/index.js';
 import { startWebServer } from './web/server.js';
 
 async function healthCheck(): Promise<void> {
-  // 1. SQLite
+  // 1. SQLite — fatal, everything depends on it
   db.prepare('SELECT 1').get();
   console.log('[startup] SQLite OK');
 
-  // 2. Anthropic API
-  const client = new Anthropic({ apiKey: config.anthropicApiKey });
-  await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 5,
-    messages: [{ role: 'user', content: 'ping' }],
-  });
-  console.log('[startup] Anthropic API OK');
+  // 2. Anthropic API — degrades gracefully (e.g. billing issues shouldn't take down the bot/web server)
+  try {
+    const client = new Anthropic({ apiKey: config.anthropicApiKey });
+    await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 5,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    console.log('[startup] Anthropic API OK');
+  } catch (err) {
+    console.error(
+      '[startup] Anthropic API check failed (continuing in degraded mode):',
+      err instanceof Error ? err.message : err,
+    );
+  }
 
-  // 3. Tavily API
-  await webSearch('test', 1);
-  console.log('[startup] Tavily API OK');
+  // 3. Tavily API — degrades gracefully
+  try {
+    await webSearch('test', 1);
+    console.log('[startup] Tavily API OK');
+  } catch (err) {
+    console.error(
+      '[startup] Tavily API check failed (continuing in degraded mode):',
+      err instanceof Error ? err.message : err,
+    );
+  }
 
-  // 4. Voyage AI
-  await embedQuery('ping');
-  console.log('[startup] Voyage AI OK');
+  // 4. Voyage AI — degrades gracefully
+  try {
+    await embedQuery('ping');
+    console.log('[startup] Voyage AI OK');
+  } catch (err) {
+    console.error(
+      '[startup] Voyage AI check failed (continuing in degraded mode):',
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   // 5. Telegram token (validated by createBot starting polling — checked implicitly)
-  console.log('[startup] All health checks passed.');
+  console.log('[startup] Health checks complete.');
 }
 
 async function main(): Promise<void> {
