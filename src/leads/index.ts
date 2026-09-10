@@ -74,6 +74,10 @@ const stmtWorkable = db.prepare(`
   WHERE status IN ('new', 'contacted', 'responded')
   ORDER BY created_at ASC, id ASC LIMIT ?
 `);
+const stmtAllForExport = db.prepare(`
+  SELECT id, name, type, location, contact, source_url, fit_reason, status, created_at
+  FROM leads ORDER BY created_at DESC, id DESC
+`);
 const stmtFunnel = db.prepare(`SELECT status, COUNT(*) AS n FROM leads GROUP BY status`);
 const stmtNewThisWeek = db.prepare(
   `SELECT COUNT(*) AS n FROM leads WHERE created_at >= datetime('now', '-7 days')`,
@@ -174,6 +178,13 @@ export function listLeadsMissingContact(limit = 8): LeadRow[] {
 
 export function getLead(id: number): LeadRow | undefined {
   return stmtById.get(id) as LeadRow | undefined;
+}
+
+// Every lead, unbounded — only for the owner-gated CRM export route. Kept
+// separate from queryLeads/listLeads (both pagination-shaped and used
+// elsewhere with capped defaults) so their contracts stay unambiguous.
+export function listAllLeadsForExport(): LeadRow[] {
+  return stmtAllForExport.all() as unknown as LeadRow[];
 }
 
 // The call sheet's work queue: workable leads (new/contacted/responded) that

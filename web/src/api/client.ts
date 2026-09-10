@@ -106,6 +106,14 @@ export const api = {
     }),
   draftPitch: (id: number) => request<{ response: string }>(`/leads/${id}/pitch`, { method: 'POST' }),
   enrichLeads: () => request<{ enriched: number; response: string | null }>('/leads/enrich', { method: 'POST' }),
+  exportLeadsToExcel: async (): Promise<Blob> => {
+    const res = await fetch('/api/leads/export', { credentials: 'include' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new ApiError(res.status, body.error ?? `Export failed (${res.status})`)
+    }
+    return res.blob()
+  },
 
   listPendingKb: () => request<{ pending: LearnedRow[] }>('/kb/pending'),
   queryKb: (opts: {

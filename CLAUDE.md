@@ -4,7 +4,7 @@
 
 Multi-agent Telegram bot for **Urvar Natural Pvt. Ltd.**, an Indian organic bio-fertilizer company. Provides business intelligence (market research, competitive analysis, R&D, sales/marketing, lead generation) and crop disease diagnosis via six specialised AI agents.
 
-- **Stack:** TypeScript (strict ESM), Node 22+, Anthropic SDK, node-telegram-bot-api, node:sqlite, node-cron, Tavily API, Voyage AI
+- **Stack:** TypeScript (strict ESM), Node 22+, Anthropic SDK, node-telegram-bot-api, node:sqlite, node-cron, Tavily API, Voyage AI, exceljs (CRM lead export)
 - **Runtime:** Compiled to `dist/` via `tsc`, deployed via PM2
 
 ---
@@ -53,7 +53,8 @@ src/
     index.ts             # node:sqlite schema, prepared statements, appendHistory/getHistory/getLastAgentUsed
   leads/
     index.ts             # Persistent B2B lead pipeline (leads table) + save_lead tool definition
-    util.ts              # Pure helpers: normalizeLeadKey(), statuses, pitch/call-sheet/enrichment prompt builders, formatFunnel() — no DB imports (unit-testable)
+    util.ts              # Pure helpers: normalizeLeadKey(), statuses, pitch/call-sheet/enrichment prompt builders, formatFunnel(), hasPhoneNumber()/PHONE_PATTERN — no DB imports (unit-testable)
+    export.ts            # Pure CRM-export mapping (extractPhoneNumber, splitLocation, mapLeadToExportRow) + buildLeadExportWorkbook() (exceljs) — no DB imports (unit-testable)
   tools/
     web-search.ts        # Tavily search + formatSearchResponse() + runWebSearchTool() shared handler + webSearchToolDefinition
     image-optimizer.ts   # Sharp variants (denoised/saturated/grayscale); graceful fallback
@@ -68,7 +69,7 @@ src/
     rate-limit.ts          # LoginRateLimiter — pure in-memory lockout for /api/auth/login, no Express dependency
     routes/
       chat.ts             # POST /api/chat, /api/chat/image (up to 3 photos), GET /api/chat/history, GET/DELETE /api/chat/sessions — mirrors bot/telegram.ts's message/photo handlers
-      leads.ts            # GET/POST/PATCH /api/leads (search/pagination/create/detail/status/contact), POST /:id/pitch, POST /enrich
+      leads.ts            # GET/POST/PATCH /api/leads (search/pagination/create/detail/status/contact), POST /:id/pitch, POST /enrich, GET /export (owner-only CRM Excel export)
       kb.ts               # GET/POST/PATCH /api/kb (general browse+search+pagination, plus /pending/:id/approve/:id/reject) — owner-only
       reports.ts          # GET /api/reports/* (archived weekly report, kbstats, call-ready leads) + POST .../generate (on-demand call sheet / article drafting)
 web/                      # Separate React + Vite SPA (own package.json/node_modules) — Notion-derived design system, sidebar shell, chat/leads/reports/kb pages
@@ -157,6 +158,7 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Call sheet** (`/callsheet` + `CALL_SHEET_CRON`, default Monday 08:30 IST to the owner): `listCallReadyLeads()` picks workable leads **with a phone number**, priority `responded > new > contacted` (oldest first within a group); if short, it runs one `/enrich`-style round first. `buildCallSheetPrompt()` (pure, `src/leads/util.ts`) formats the briefing task; a deterministic footer prints the exact `/leads <id> contacted` commands.
 - **`/pitch <id>`**: `getLead()` + `buildPitchPrompt()` (pure) → sales agent drafts a ready-to-send WhatsApp intro + 30s call opener for that specific lead.
 - **Content engine** (`/article [topic]` + `CONTENT_CRON`, default Wednesday 09:00 IST to the owner): the sales agent writes one seasonal website SEO article grounded in RAG docs (`sendContentDraft()`).
+- **Bulk export to CRM (`GET /api/leads/export`, dashboard-only, owner-gated):** `listAllLeadsForExport()` (`src/leads/index.ts`, unbounded — no filter/pagination, unlike `queryLeads`/`listLeads`) feeds `buildLeadExportWorkbook()` (`src/leads/export.ts`, `exceljs`), which writes a `.xlsx` matching Urvar's CRM bulk-import template exactly (single "Template" sheet, 18-column header row: Name\*, Phone\*, Lead Source, Customer Type, State\*, District\*, Company Name, Contact Person, WhatsApp Number, Email, Pincode, Address, Interested Products, Expected Quantity, Expected Monthly Value, Estimated Value, Crop Interest, Remarks). Our schema is thinner than the CRM's — `mapLeadToExportRow()` best-effort fills the gaps: `extractPhoneNumber()` pulls a phone out of the freeform `contact` field (reuses `hasPhoneNumber()`'s exact `PHONE_PATTERN`, so the two never disagree on what "looks like a phone number" means); `splitLocation()` splits `location` on the first comma into District/State (the lead-gen agent is instructed to save `location` as "City, State", per `saveLeadToolDefinition`, but this is a naive heuristic — a third comma-separated part lands entirely in `state`). Every CRM column with no corresponding source data (Lead Source, Contact Person, WhatsApp Number, Email, Pincode, Interested Products, Expected Quantity/Monthly Value, Estimated Value, Crop Interest) is left blank rather than fabricated; `contact` populates Address only when it does **not** look like a phone number. `name` fills both Name and Company Name (leads are businesses, not individuals). The frontend (`web/src/pages/LeadsPage.tsx`'s "Export to CRM" button, owner-only) can't use the shared `request<T>()` JSON helper for a binary response — `api.exportLeadsToExcel()` does its own `fetch`+`.blob()`, handed to the generic `downloadBlob()` helper (`web/src/lib/download.ts`).
 
 ### Routing (Orchestrator)
 
@@ -191,6 +193,7 @@ tsconfig.test.json       # tsc project for type-checking src/ + tests/ together
 - **Frontend build lives outside `src/`.** `web/` is a separate Vite + React + TypeScript app with its own `package.json`/`node_modules` (not an npm workspace) — `npm run build` (root) runs `tsc && npm run build:web`, which builds `web/dist`. `src/web/server.ts` serves it via `express.static` + an SPA fallback route; if `web/dist` doesn't exist (frontend never built), the API still comes up, just without the static UI. `npm run dev:web` runs the Vite dev server, which proxies `/api` to `WEB_PORT` so cookies stay same-origin without needing CORS.
 - **Design system (`web/src/index.css`)** is derived from Notion's own published palette (`#37352F` text, `#787774` secondary, warm off-white ground) with Urvar's organic green as the accent instead of a generic blue, and a left sidebar layout (Notion's structural signature) instead of top tabs. Semantic status colors (lead/KB status pills) are a distinct hue family from the accent. Everything is CSS custom properties on `:root`, redefined under `@media (prefers-color-scheme: dark)` and `:root[data-theme]` so both the OS preference and an in-app toggle work.
 - **Chat markdown rendering is hand-rolled** (`web/src/lib/markdown-lite.tsx`) — emits React nodes directly (bold/italic/code/links/lists/headings), never `dangerouslySetInnerHTML` or an HTML string, so there is no HTML-injection surface regardless of model output; link hrefs are checked against `^https?://` before being rendered as `<a>`, otherwise shown as plain text (blocks `javascript:` URI clicks).
+- **Binary file downloads** (currently just the leads CRM export) go through `downloadBlob()` (`web/src/lib/download.ts`) — `URL.createObjectURL` → hidden `<a download>` → `.click()` → `URL.revokeObjectURL`. The API client's shared `request<T>()` helper always calls `res.json()`, so binary endpoints bypass it entirely with their own `fetch()` + `.blob()` (see `api.exportLeadsToExcel()`).
 - **Tier-1 tests exist for this module** (`tests/unit/rate-limit.test.ts`, `tests/unit/web-routes.test.ts`) covering everything that doesn't call a real LLM/embedding API — auth (login/logout/me/role-gating), leads CRUD, KB browse+reject, reports read paths. KB approve, chat, and the on-demand generate endpoints are excluded (they call Anthropic/Voyage). **`tests/setup.ts` force-overrides `SQLITE_DB_PATH` to a fresh temp file for the whole test run** (not `??=` — unlike the API-key placeholders, this must win even over a real `.env` value), so these route tests can never touch the real database.
 
 ### Config

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError, type LeadRow } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { MarkdownLite } from '../lib/markdown-lite'
+import { downloadBlob } from '../lib/download'
 
 const STATUSES = ['new', 'contacted', 'responded', 'converted', 'dead'] as const
 const PAGE_SIZE = 20
@@ -10,6 +12,7 @@ const EMPTY_FORM = { name: '', type: '', location: '', contact: '', source_url: 
 
 export function LeadsPage() {
   const toast = useToast()
+  const { role } = useAuth()
   const [leads, setLeads] = useState<LeadRow[]>([])
   const [total, setTotal] = useState(0)
   const [funnel, setFunnel] = useState<Record<string, number>>({})
@@ -27,6 +30,7 @@ export function LeadsPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [enriching, setEnriching] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const load = (): void => {
     setLoading(true)
@@ -98,6 +102,18 @@ export function LeadsPage() {
     }
   }
 
+  const onExport = async (): Promise<void> => {
+    setExporting(true)
+    try {
+      const blob = await api.exportLeadsToExcel()
+      downloadBlob(blob, 'leads-crm-import.xlsx')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to export leads.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const onCreate = async (): Promise<void> => {
     if (!form.name.trim() || !form.type.trim() || !form.location.trim()) {
       toast.error('Name, type, and location are required.')
@@ -147,6 +163,11 @@ export function LeadsPage() {
         <button type="button" className="ghost" onClick={() => void onEnrich()} disabled={enriching}>
           {enriching ? 'Enriching…' : 'Enrich missing contacts'}
         </button>
+        {role === 'owner' && (
+          <button type="button" className="ghost" onClick={() => void onExport()} disabled={exporting}>
+            {exporting ? 'Exporting…' : 'Export to CRM'}
+          </button>
+        )}
         <button type="button" onClick={() => setShowAddForm(true)}>
           + Add lead
         </button>

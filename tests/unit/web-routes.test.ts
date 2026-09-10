@@ -169,6 +169,31 @@ test('create, list, search, update status/contact, and reject duplicates', async
   assert.equal(missing.status, 404);
 });
 
+test('leads/export is owner-only and returns an xlsx attachment', async () => {
+  const memberCookie = await loginAs('member');
+  const ownerCookie = await loginAs('owner');
+
+  await fetch(`${baseUrl}/api/leads`, {
+    method: 'POST',
+    headers: { Cookie: ownerCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Export Test Traders', type: 'retailer', location: 'Kolkata, West Bengal' }),
+  });
+
+  const anon = await fetch(`${baseUrl}/api/leads/export`);
+  assert.equal(anon.status, 401);
+
+  const memberRes = await fetch(`${baseUrl}/api/leads/export`, { headers: { Cookie: memberCookie } });
+  assert.equal(memberRes.status, 403);
+
+  const ownerRes = await fetch(`${baseUrl}/api/leads/export`, { headers: { Cookie: ownerCookie } });
+  assert.equal(ownerRes.status, 200);
+  assert.ok(
+    ownerRes.headers.get('content-type')?.startsWith('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+  );
+  assert.ok(ownerRes.headers.get('content-disposition')?.includes('attachment'));
+  assert.ok((await ownerRes.arrayBuffer()).byteLength > 0);
+});
+
 // ---------------------------------------------------------------------------
 // Knowledge base (read + reject only — approve hits the Voyage API)
 

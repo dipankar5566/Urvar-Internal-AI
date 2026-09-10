@@ -30,7 +30,7 @@ export function normalizeLeadKey(name: string, location: string): string {
 // digits in a row, allowing spaces/dashes/parens between them ("+91 89109
 // 63144", "033-2654 3210"). Commas break a match on purpose, so an address
 // like "12, Palghat Lane … 711202" (house number + PIN) doesn't false-match.
-const PHONE_PATTERN = /(?:\+?\d[\s()-]?){9}\d/;
+export const PHONE_PATTERN = /(?:\+?\d[\s()-]?){9}\d/;
 
 export function hasPhoneNumber(text: string): boolean {
   return PHONE_PATTERN.test(text);

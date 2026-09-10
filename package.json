@@ -21,6 +21,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@tensorflow/tfjs-node": "^4.22.0",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.66.0",

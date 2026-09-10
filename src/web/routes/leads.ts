@@ -7,12 +7,14 @@ import {
   saveLead,
   getLead,
   listLeadsMissingContact,
+  listAllLeadsForExport,
   type LeadInput,
 } from '../../leads/index.js';
 import { isLeadStatus, buildPitchPrompt, buildEnrichmentPrompt, type LeadStatus } from '../../leads/util.js';
+import { buildLeadExportWorkbook } from '../../leads/export.js';
 import { salesMarketingAgent } from '../../agents/sales-marketing.js';
 import { leadGenerationAgent } from '../../agents/lead-generation.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireOwner } from '../auth.js';
 
 export function createLeadsRouter(): Router {
   const router = Router();
@@ -33,6 +35,17 @@ export function createLeadsRouter(): Router {
     const offset = Math.max(parseInt((req.query['offset'] as string) ?? '0', 10) || 0, 0);
     const { leads, total } = queryLeads({ status, search, limit, offset });
     res.json({ leads, total, limit, offset, funnel: leadFunnelCounts() });
+  });
+
+  // Owner-only bulk export of every lead into the CRM's bulk-import Excel
+  // template. Always exports the full table, ignoring any dashboard
+  // filter/search. Placed before /:id so "export" isn't captured as an id.
+  router.get('/export', requireOwner(), async (_req, res) => {
+    const leads = listAllLeadsForExport();
+    const buffer = await buildLeadExportWorkbook(leads);
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', 'attachment; filename="leads-crm-import.xlsx"');
+    res.send(buffer);
   });
 
   router.get('/:id', (req, res) => {
